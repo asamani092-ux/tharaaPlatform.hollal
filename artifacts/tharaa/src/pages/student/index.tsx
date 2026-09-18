@@ -107,6 +107,18 @@ const TRACK_COMPLETE_MESSAGES = [
   "مبروك هذا الإنجاز! أنت من فرسان البرنامج الذين أكملوا المسار كاملاً.",
 ] as const;
 
+/** مسودة أرقام الصفحات: فارغ أو أرقام فقط — O(1). */
+function isDigitDraft(value: string): boolean {
+  return value === "" || /^\d+$/.test(value);
+}
+
+/** تحويل المسودة لرقم عند blur/submit مع احتفاظ بالمنطق السابق — O(1). */
+function parsePageDraft(value: string, fallback: number): number {
+  if (value.trim() === "") return fallback;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function trackCompleteStorageKey(userId: number) {
   return `tharaa_track_congrats_${userId}`;
 }
@@ -261,11 +273,15 @@ export default function StudentPortal() {
   const [bookId, setBookId] = useState<string>("");
   const [startPage, setStartPage] = useState<number>(1);
   const [endPage, setEndPage] = useState<number>(weeklyQuota);
+  /** مسودة نصية أثناء الكتابة — تسمح بالفراغ دون فرض رقم فوري. */
+  const [startPageInput, setStartPageInput] = useState<string>("1");
+  const [endPageInput, setEndPageInput] = useState<string>(String(weeklyQuota));
   const [reflection, setReflection] = useState("");
   const [showReflection, setShowReflection] = useState(false);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [nextBookIdForRollover, setNextBookIdForRollover] = useState<string>("");
   const [rolloverEndPage, setRolloverEndPage] = useState(1);
+  const [rolloverEndPageInput, setRolloverEndPageInput] = useState<string>("1");
   const [rolloverPagesManuallyEdited, setRolloverPagesManuallyEdited] = useState(false);
   const [pendingSubmissionData, setPendingSubmissionData] = useState<{
     rows: LogRow[];
@@ -453,6 +469,19 @@ export default function StudentPortal() {
     maxEndPageByBookId,
   ]);
 
+  // مزامنة المسودة مع القيم الرقمية بعد الحقن البرمجي أو التصحيح.
+  useEffect(() => {
+    setStartPageInput(String(startPage));
+  }, [startPage]);
+
+  useEffect(() => {
+    setEndPageInput(String(endPage));
+  }, [endPage]);
+
+  useEffect(() => {
+    setRolloverEndPageInput(String(rolloverEndPage));
+  }, [rolloverEndPage]);
+
   const pickCurrentBookForLog = () => {
     if (!isCurrentBookValid || !userCurrentBook) return;
     setBookFieldError(false);
@@ -466,7 +495,10 @@ export default function StudentPortal() {
     setPagesManuallyEdited(false);
     setIsExtraMode(true);
   };
-  const pagesCount = Math.max(0, endPage - startPage + 1);
+  const pagesCount = Math.max(
+    0,
+    parsePageDraft(endPageInput, endPage) - parsePageDraft(startPageInput, startPage) + 1
+  );
   const nextBook =
     availableCoreBooks.find((b) => b.id !== currentBook?.id) ??
     availableBooks.find((b) => b.id !== currentBook?.id);
@@ -558,24 +590,35 @@ export default function StudentPortal() {
       return null;
     }
 
+    // اعتماد المسودة عند الإرسال (حتى بلا blur) — نفس منطق الفراغ والسقف.
+    const start = Math.max(1, parsePageDraft(startPageInput, 1));
+    const endRaw = parsePageDraft(endPageInput, start);
     const lastPage = lastPageForBook(selectedBook);
+    const clamped = clampPageRangeToBook(selectedBook, start, endRaw, lastPage);
+    setStartPage(clamped.startPage);
+    setEndPage(clamped.endPage);
+    setStartPageInput(String(clamped.startPage));
+    setEndPageInput(String(clamped.endPage));
+
     const check = validatePageRangeAgainstBook(
       selectedBook,
-      startPage,
-      endPage,
+      clamped.startPage,
+      clamped.endPage,
       lastPage
     );
     if (!check.ok) {
       toast.error(check.message ?? "تحقق من نطاق الصفحات");
-      if (check.normalizedEnd !== endPage) {
+      if (check.normalizedEnd !== clamped.endPage) {
         setEndPage(check.normalizedEnd);
+        setEndPageInput(String(check.normalizedEnd));
       }
       return null;
     }
-    if (check.normalizedEnd !== endPage) {
+    if (check.normalizedEnd !== clamped.endPage) {
       setEndPage(check.normalizedEnd);
+      setEndPageInput(String(check.normalizedEnd));
     }
-    return normalizeRow(selectedBook, startPage, check.normalizedEnd);
+    return normalizeRow(selectedBook, clamped.startPage, check.normalizedEnd);
   };
 
   const openMultiBookDialog = (rows: LogRow[], remainingQuota: number) => {
@@ -691,10 +734,20 @@ export default function StudentPortal() {
 
     const lastPageOnNext = lastPageForBook(nextBook);
     const rolloverStartPage = Math.max(1, lastPageOnNext + 1);
+    const endRaw = parsePageDraft(rolloverEndPageInput, rolloverStartPage);
+    const clamped = clampPageRangeToBook(
+      nextBook,
+      rolloverStartPage,
+      endRaw,
+      lastPageOnNext
+    );
+    setRolloverEndPage(clamped.endPage);
+    setRolloverEndPageInput(String(clamped.endPage));
+
     const rangeCheck = validatePageRangeAgainstBook(
       nextBook,
       rolloverStartPage,
-      rolloverEndPage,
+      clamped.endPage,
       lastPageOnNext
     );
     if (!rangeCheck.ok) {
@@ -747,7 +800,7 @@ export default function StudentPortal() {
 
   const rolloverPagesCount = Math.max(
     0,
-    rolloverEndPage -
+    parsePageDraft(rolloverEndPageInput, rolloverEndPage) -
       Math.max(1, (rolloverSelectedBook ? lastPageForBook(rolloverSelectedBook) : 0) + 1) +
       1
   );
@@ -1103,12 +1156,25 @@ export default function StudentPortal() {
                     <div className="space-y-1.5">
                       <Label>من صفحة</Label>
                       <Input
-                        type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         min={1}
-                        value={startPage}
+                        value={startPageInput}
                         onChange={(e) => {
+                          const v = e.target.value;
+                          if (!isDigitDraft(v)) return;
                           setPagesManuallyEdited(true);
-                          setStartPage(Math.max(1, parseInt(e.target.value, 10) || 1));
+                          setStartPageInput(v);
+                        }}
+                        onBlur={() => {
+                          const start = Math.max(1, parsePageDraft(startPageInput, 1));
+                          setStartPage(start);
+                          setStartPageInput(String(start));
+                          if (endPage < start) {
+                            setEndPage(start);
+                            setEndPageInput(String(start));
+                          }
                         }}
                         className="h-11 text-center"
                         required
@@ -1117,36 +1183,39 @@ export default function StudentPortal() {
                     <div className="space-y-1.5">
                       <Label>إلى صفحة</Label>
                       <Input
-                        type="number"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         min={startPage}
                         max={selectedBook ? bookTotalPages(selectedBook) : undefined}
-                        value={endPage}
+                        value={endPageInput}
                         onChange={(e) => {
+                          const v = e.target.value;
+                          if (!isDigitDraft(v)) return;
                           setPagesManuallyEdited(true);
-                          if (!selectedBook) {
-                            setEndPage(parseInt(e.target.value, 10) || startPage);
-                            return;
-                          }
-                          const raw = parseInt(e.target.value, 10) || startPage;
-                          const clamped = clampPageRangeToBook(
-                            selectedBook,
-                            startPage,
-                            raw,
-                            lastPageForBook(selectedBook)
-                          );
-                          setStartPage(clamped.startPage);
-                          setEndPage(clamped.endPage);
+                          setEndPageInput(v);
                         }}
                         onBlur={() => {
-                          if (!selectedBook) return;
+                          const start = Math.max(1, parsePageDraft(startPageInput, 1));
+                          const endRaw = parsePageDraft(endPageInput, start);
+                          if (!selectedBook) {
+                            const end = Math.max(endRaw, start);
+                            setStartPage(start);
+                            setEndPage(end);
+                            setStartPageInput(String(start));
+                            setEndPageInput(String(end));
+                            return;
+                          }
                           const clamped = clampPageRangeToBook(
                             selectedBook,
-                            startPage,
-                            endPage,
+                            start,
+                            endRaw,
                             lastPageForBook(selectedBook)
                           );
                           setStartPage(clamped.startPage);
                           setEndPage(clamped.endPage);
+                          setStartPageInput(String(clamped.startPage));
+                          setEndPageInput(String(clamped.endPage));
                         }}
                         className="h-11 text-center"
                         required
@@ -1569,16 +1638,25 @@ export default function StudentPortal() {
                       <div className="space-y-1">
                         <Label className="text-xs">إلى صفحة</Label>
                         <Input
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           min={rolloverStartPage}
                           max={rolloverBookTotal}
-                          value={rolloverEndPage}
+                          value={rolloverEndPageInput}
                           onChange={(e) => {
+                            const v = e.target.value;
+                            if (!isDigitDraft(v)) return;
                             setRolloverPagesManuallyEdited(true);
-                            const raw = parseInt(e.target.value, 10) || rolloverStartPage;
+                            setRolloverEndPageInput(v);
+                          }}
+                          onBlur={() => {
+                            const raw = parsePageDraft(
+                              rolloverEndPageInput,
+                              rolloverStartPage
+                            );
                             applyRolloverRange(raw);
                           }}
-                          onBlur={() => applyRolloverRange(rolloverEndPage)}
                           className="h-10 text-center"
                         />
                       </div>
