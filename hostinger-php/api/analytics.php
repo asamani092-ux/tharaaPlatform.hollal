@@ -484,19 +484,54 @@ function loadLastPrimaryLogDateByUser(PDO $pdo): array
     $map = [];
     try {
         $rows = $pdo->query("
-            SELECT user_id, MAX(`date`) AS last_date
+            SELECT user_id,
+                   MAX(
+                     CASE
+                       WHEN `date` IS NOT NULL AND TRIM(CAST(`date` AS CHAR)) <> ''
+                         THEN LEFT(CAST(`date` AS CHAR), 10)
+                       WHEN week_label IS NOT NULL AND TRIM(week_label) <> ''
+                         THEN LEFT(week_label, 10)
+                       ELSE NULL
+                     END
+                   ) AS last_date
             FROM reading_logs
-            WHERE submission_status IN ('on_time', 'late', 'missed')
+            WHERE (
+                submission_status IN ('on_time', 'late', 'missed')
+                OR submission_status IS NULL
+                OR TRIM(submission_status) = ''
+            )
             GROUP BY user_id
         ")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as $row) {
             $uid = (int)($row['user_id'] ?? 0);
-            if ($uid > 0 && !empty($row['last_date'])) {
-                $map[$uid] = (string)$row['last_date'];
+            $last = normalizeWeekLabel($row['last_date'] ?? '');
+            if ($uid > 0 && $last !== '') {
+                $map[$uid] = $last;
             }
         }
     } catch (Exception $e) {
-        // ignore if date column missing
+        try {
+            $rows = $pdo->query("
+                SELECT user_id, MAX(LEFT(week_label, 10)) AS last_date
+                FROM reading_logs
+                WHERE (
+                submission_status IN ('on_time', 'late', 'missed')
+                OR submission_status IS NULL
+                OR TRIM(submission_status) = ''
+            )
+                  AND week_label IS NOT NULL AND TRIM(week_label) <> ''
+                GROUP BY user_id
+            ")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($rows as $row) {
+                $uid = (int)($row['user_id'] ?? 0);
+                $last = normalizeWeekLabel($row['last_date'] ?? '');
+                if ($uid > 0 && $last !== '') {
+                    $map[$uid] = $last;
+                }
+            }
+        } catch (Exception $e2) {
+            // ignore
+        }
     }
     return $map;
 }
@@ -549,45 +584,69 @@ function normalizeWeekLabel($raw): string
 }
 
 /**
- * هل لدى المشارك رصد أساسي يغطي الأسبوع السابق أو الحالي؟
+ * هل يوجد رصد أساسي يتقاطع مع فترة الفلتر [filterFrom, today]؟
  * زمن: O(W) لأسابيع المشارك.
  *
  * @param array<string, true> $weeksWithPrimary
  */
-function studentCoveredThroughPreviousWeek(
+function hasPrimaryInFilterPeriod(
     array $weeksWithPrimary,
     ?string $lastPrimaryAt,
-    string $previousWeek,
+    string $filterFrom,
+    string $todayYmd,
     int $primaryStartDay
 ): bool {
-    foreach ($weeksWithPrimary as $label => $_) {
-        $norm = normalizeWeekLabel($label);
-        if ($norm !== '' && $norm >= $previousWeek) {
-            return true;
-        }
-    }
-
-    $last = normalizeWeekLabel($lastPrimaryAt ?? '');
-    if ($last === '') {
+    $from = normalizeWeekLabel($filterFrom);
+    $to = normalizeWeekLabel($todayYmd);
+    if ($from === '' || $to === '') {
         return false;
     }
 
-    // تاريخ آخر رصد → مفتاح أسبوع الرصد
-    try {
-        $lastDt = new DateTime($last, new DateTimeZone(APP_TIMEZONE));
-        $lastWeek = weekLabelForDate($lastDt, $primaryStartDay);
-        if ($lastWeek >= $previousWeek) {
-            return true;
-        }
-    } catch (Exception $e) {
-        // fall through
+    $last = normalizeWeekLabel($lastPrimaryAt ?? '');
+    if ($last !== '' && $last >= $from && $last <= $to) {
+        return true;
     }
 
-    return $last >= $previousWeek;
+    if ($last !== '') {
+        try {
+            $lastWeek = weekLabelForDate(
+                new DateTime($last, new DateTimeZone(APP_TIMEZONE)),
+                $primaryStartDay
+            );
+            $weekEnd = (new DateTime($lastWeek, new DateTimeZone(APP_TIMEZONE)))
+                ->modify('+6 days')
+                ->format('Y-m-d');
+            if ($lastWeek <= $to && $weekEnd >= $from) {
+                return true;
+            }
+        } catch (Exception $e) {
+            // continue
+        }
+    }
+
+    foreach ($weeksWithPrimary as $label => $_) {
+        $w = normalizeWeekLabel($label);
+        if ($w === '') {
+            continue;
+        }
+        try {
+            $weekEnd = (new DateTime($w, new DateTimeZone(APP_TIMEZONE)))
+                ->modify('+6 days')
+                ->format('Y-m-d');
+        } catch (Exception $e) {
+            continue;
+        }
+        // الأسبوع يتقاطع مع فترة الفلتر
+        if ($w <= $to && $weekEnd >= $from) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
- * متعثرون: بلا رصد أساسي يغطي أسبوع الرصد السابق (دورة أسبوعية).
+ * متعثرون: بلا أي رصد أساسي خلال فترة الفلتر فقط (وليس التاريخ كله).
  * زمن: O(U·W) حيث W ≤ 12؛ مكان: O(U).
  *
  * @param array<int, string|null> $lastPrimaryByUser
@@ -609,14 +668,20 @@ function buildWeeklyStrugglers(
     $tz = new DateTimeZone(APP_TIMEZONE);
     $today = riyadhDateTime();
     $today->setTime(0, 0, 0);
-    $currentWeek = weekLabelForDate($today, $primaryStartDay);
-    $previousWeekDt = new DateTime($currentWeek, $tz);
-    $previousWeekDt->modify('-7 days');
-    $previousWeek = $previousWeekDt->format('Y-m-d');
-    // من انضم بعد بداية الأسبوع السابق لم يُكلَّف بدورته بعد
-    $eligibilityCutoff = clone $previousWeekDt;
+    $todayYmd = $today->format('Y-m-d');
+    $filterFromNorm = normalizeWeekLabel($filterFrom);
+    if ($filterFromNorm === '') {
+        $filterFromNorm = (clone $today)->modify('-7 days')->format('Y-m-d');
+    }
 
-    $weekLabels = enumerateWeekLabelsSince($filterFrom, $primaryStartDay, 12);
+    try {
+        $eligibilityCutoff = new DateTime($filterFromNorm, $tz);
+        $eligibilityCutoff->setTime(0, 0, 0);
+    } catch (Exception $e) {
+        $eligibilityCutoff = (clone $today)->modify('-7 days');
+    }
+
+    $weekLabels = enumerateWeekLabelsSince($filterFromNorm, $primaryStartDay, 12);
     $students = [];
 
     foreach ($users as $user) {
@@ -645,6 +710,7 @@ function buildWeeklyStrugglers(
         );
         if ($memberSince !== null) {
             $memberDay = (clone $memberSince)->setTime(0, 0, 0);
+            // انضم بعد بداية فترة الفلتر → لم تُحسب عليه الفترة كاملة
             if ($memberDay > $eligibilityCutoff) {
                 continue;
             }
@@ -652,10 +718,12 @@ function buildWeeklyStrugglers(
 
         $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
         $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
-        if (studentCoveredThroughPreviousWeek(
+        // الشرط الوحيد للدخول: لا رصد أساسي يتقاطع مع فترة الفلتر
+        if (hasPrimaryInFilterPeriod(
             $weeksWithPrimary,
             is_string($lastPrimary) ? $lastPrimary : null,
-            $previousWeek,
+            $filterFromNorm,
+            $todayYmd,
             $primaryStartDay
         )) {
             continue;
@@ -684,7 +752,7 @@ function buildWeeklyStrugglers(
             'lastPrimaryAt' => $lastPrimaryAt,
             'lastLogAt' => $lastPrimaryAt,
             'missedWeeksSinceFilter' => $missed,
-            'missedWeekLabel' => $previousWeek,
+            'filterFrom' => $filterFromNorm,
         ];
     }
 
@@ -879,7 +947,8 @@ try {
         if ($status === 'extra') {
             continue;
         }
-        if (in_array($status, ['on_time', 'late', 'missed'], true)) {
+        $isPrimary = ($status === '' || in_array($status, ['on_time', 'late', 'missed'], true));
+        if ($isPrimary) {
             $weekNorm = normalizeWeekLabel($week);
             $logDate = trim((string)($log['date'] ?? ''));
             $day = $logDate !== '' ? substr($logDate, 0, 10) : '';
