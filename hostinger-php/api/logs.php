@@ -240,12 +240,24 @@ try {
         $prevPhase = (int)($userRow['phase_number'] ?? 1);
 
         $stmtBook = $pdo->prepare('SELECT id, phase_number, track_type, total_pages FROM curriculum WHERE id = ?');
-        $stmtInsert = $pdo->prepare("
-            INSERT INTO reading_logs
-            (user_id, book_id, start_page, end_page, pages_read, is_completed, submission_status, reflection, week_label, `date`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
         $logDate = riyadhDateTime()->format('Y-m-d');
+        $stmtInsertWithDate = null;
+        $insertWithDate = false;
+        try {
+            $stmtInsertWithDate = $pdo->prepare("
+                INSERT INTO reading_logs
+                (user_id, book_id, start_page, end_page, pages_read, is_completed, submission_status, reflection, week_label, `date`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $insertWithDate = true;
+        } catch (Exception $e) {
+            $stmtInsertWithDate = null;
+        }
+        $stmtInsertPlain = $pdo->prepare("
+            INSERT INTO reading_logs
+            (user_id, book_id, start_page, end_page, pages_read, is_completed, submission_status, reflection, week_label)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
 
         $lastBookId = null;
         $lastEndPage = 0;
@@ -275,7 +287,7 @@ try {
                 $reflectionUsed = true;
             }
 
-            $stmtInsert->execute([
+            $paramsPlain = [
                 $userId,
                 $bookId,
                 $startPage,
@@ -285,8 +297,17 @@ try {
                 $submissionStatus,
                 $rowReflection,
                 $weekLabel,
-                $logDate,
-            ]);
+            ];
+            if ($insertWithDate && $stmtInsertWithDate) {
+                try {
+                    $stmtInsertWithDate->execute(array_merge($paramsPlain, [$logDate]));
+                } catch (Exception $e) {
+                    $insertWithDate = false;
+                    $stmtInsertPlain->execute($paramsPlain);
+                }
+            } else {
+                $stmtInsertPlain->execute($paramsPlain);
+            }
             $insertedIds[] = (int)$pdo->lastInsertId();
 
             if ($isCompleted && !in_array($bookId, $completedBooks, true)) {
