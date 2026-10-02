@@ -859,9 +859,16 @@ try {
     }
     $meId = $scopeMe ? (int)($_COOKIE['userId'] ?? 0) : 0;
     $lastLogByUser = $scopeMe ? [] : loadLastLogDateByUser($pdo);
-    $lastPrimaryByUser = $scopeMe ? [] : (
-        !empty($lastPrimaryFromLogs) ? $lastPrimaryFromLogs : loadLastPrimaryLogDateByUser($pdo)
-    );
+    $lastPrimaryByUser = [];
+    if (!$scopeMe) {
+        $lastPrimaryByUser = loadLastPrimaryLogDateByUser($pdo);
+        foreach ($lastPrimaryFromLogs as $uid => $day) {
+            $uid = (int)$uid;
+            if (!isset($lastPrimaryByUser[$uid]) || $day > $lastPrimaryByUser[$uid]) {
+                $lastPrimaryByUser[$uid] = $day;
+            }
+        }
+    }
     $primaryStartDay = resolvePrimaryStartDay($settings);
 
     $usersDetail = [];

@@ -67,7 +67,7 @@
 
 | المؤشر | المنطق |
 |--------|--------|
-| متعثرون الأسبوع الماضي (`atRisk`, تجريبي) | بلا رصد أساسي (`on_time\|late\|missed`) خلال آخر **7 أيام** (`Asia/Riyadh`). `extra` لا يكفي. مشاركون جدد بعد بداية النافذة مستثنون. فلاتر: `strugglerBatchId`, `strugglerFrom` (افتراضي اليوم−7). الواجهة الكاملة في `/admin/strugglers`؛ نظرة عامة تعرض ملخصاً فقط. صف الطالب: `name`, `batchName`, `lastPrimaryAt`, `missedWeeksSinceFilter`, `phone` (للواتساب فقط). إعداد `atRiskInactiveDays` مخفي من الواجهة ويبقى في API/DB |
+| متعثرون الأسبوع الماضي (`atRisk`, تجريبي) | **نشطون فقط.** بلا رصد أساسي (`on_time\|late\|missed`) لأسبوع الرصد **السابق** (`week_label`). `extra` لا يكفي. من انضم بعد بداية ذلك الأسبوع مستثنون. فلاتر: `strugglerBatchId`, `strugglerFrom` (افتراضي اليوم−7 لعدّ التعثرات فقط). الواجهة: `/admin/strugglers` |
 | عنق الزجاجة | أعلى عدد مشاركين «عالقين» على `current_book_id` غير موجود في `completed_books` |
 
 ### نشر يدوي
