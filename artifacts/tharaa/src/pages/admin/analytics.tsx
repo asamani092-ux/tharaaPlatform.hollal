@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useListBatches } from "@workspace/api-client-react";
+import { Link } from "wouter";
 import { AdminLayout } from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -12,11 +13,12 @@ import {
   Star,
   Shield,
   BookOpen,
+  AlertTriangle,
+  ArrowLeft,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { buildAnalyticsUrl, defaultStrugglerFrom } from "@/lib/analyticsQuery";
+import { buildAnalyticsUrl } from "@/lib/analyticsQuery";
 import { downloadAnalyticsExcel } from "@/lib/exportAnalyticsExcel";
-import { WeeklyStrugglersCard } from "@/components/admin/WeeklyStrugglersCard";
 
 function StatCard({
   label,
@@ -53,24 +55,11 @@ export default function AdminAnalytics() {
   const { data: batches } = useListBatches();
   const [selectedBatch, setSelectedBatch] = useState("all");
   const [selectedTrack, setSelectedTrack] = useState("all");
-  const [strugglerBatchId, setStrugglerBatchId] = useState("all");
-  const [strugglerFrom, setStrugglerFrom] = useState(defaultStrugglerFrom);
 
   const { data: analytics, isLoading } = useQuery({
-    queryKey: [
-      "admin-analytics-full",
-      selectedBatch,
-      selectedTrack,
-      strugglerBatchId,
-      strugglerFrom,
-    ],
+    queryKey: ["admin-analytics-full", selectedBatch, selectedTrack],
     queryFn: async () => {
-      const res = await fetch(
-        buildAnalyticsUrl(selectedBatch, selectedTrack, {
-          strugglerBatchId,
-          strugglerFrom,
-        })
-      );
+      const res = await fetch(buildAnalyticsUrl(selectedBatch, selectedTrack));
       if (!res.ok) throw new Error("فشل جلب الإحصائيات");
       return res.json();
     },
@@ -148,19 +137,26 @@ export default function AdminAnalytics() {
           </div>
         </div>
 
-        <WeeklyStrugglersCard
-          students={atRisk?.students ?? []}
-          count={atRisk?.count ?? 0}
-          windowDays={atRisk?.windowDays ?? 7}
-          batches={batches}
-          strugglerBatchId={strugglerBatchId}
-          strugglerFrom={strugglerFrom}
-          onBatchChange={setStrugglerBatchId}
-          onFromChange={setStrugglerFrom}
-          isLoading={isLoading}
-        />
-
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="border-[var(--error-600)]/30">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-[var(--error-600)]">
+                <AlertTriangle className="w-4 h-4" />
+                المتعثرون
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <p className="text-2xl font-bold text-[var(--error-600)] tabular-nums">
+                {isLoading ? "..." : atRisk?.count ?? 0}
+              </p>
+              <Link href="/admin/strugglers">
+                <Button type="button" variant="secondary" size="sm" className="gap-2">
+                  فتح قائمة المتعثرين
+                  <ArrowLeft className="w-4 h-4" />
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
