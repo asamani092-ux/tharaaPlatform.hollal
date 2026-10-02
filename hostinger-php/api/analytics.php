@@ -529,7 +529,65 @@ function enumerateWeekLabelsSince(string $filterFrom, int $startDay, int $maxWee
 }
 
 /**
- * متعثرون: بلا رصد أساسي لأسبوع الرصد السابق (دورة أسبوعية).
+ * تطبيع مفتاح أسبوع الرصد إلى Y-m-d — O(1).
+ */
+function normalizeWeekLabel($raw): string
+{
+    $s = trim((string)$raw);
+    if ($s === '') {
+        return '';
+    }
+    if (preg_match('/^(\d{4}-\d{2}-\d{2})/', $s, $m)) {
+        return $m[1];
+    }
+    try {
+        $dt = new DateTime($s, new DateTimeZone(APP_TIMEZONE));
+        return $dt->format('Y-m-d');
+    } catch (Exception $e) {
+        return '';
+    }
+}
+
+/**
+ * هل لدى المشارك رصد أساسي يغطي الأسبوع السابق أو الحالي؟
+ * زمن: O(W) لأسابيع المشارك.
+ *
+ * @param array<string, true> $weeksWithPrimary
+ */
+function studentCoveredThroughPreviousWeek(
+    array $weeksWithPrimary,
+    ?string $lastPrimaryAt,
+    string $previousWeek,
+    int $primaryStartDay
+): bool {
+    foreach ($weeksWithPrimary as $label => $_) {
+        $norm = normalizeWeekLabel($label);
+        if ($norm !== '' && $norm >= $previousWeek) {
+            return true;
+        }
+    }
+
+    $last = normalizeWeekLabel($lastPrimaryAt ?? '');
+    if ($last === '') {
+        return false;
+    }
+
+    // تاريخ آخر رصد → مفتاح أسبوع الرصد
+    try {
+        $lastDt = new DateTime($last, new DateTimeZone(APP_TIMEZONE));
+        $lastWeek = weekLabelForDate($lastDt, $primaryStartDay);
+        if ($lastWeek >= $previousWeek) {
+            return true;
+        }
+    } catch (Exception $e) {
+        // fall through
+    }
+
+    return $last >= $previousWeek;
+}
+
+/**
+ * متعثرون: بلا رصد أساسي يغطي أسبوع الرصد السابق (دورة أسبوعية).
  * زمن: O(U·W) حيث W ≤ 12؛ مكان: O(U).
  *
  * @param array<int, string|null> $lastPrimaryByUser
@@ -593,8 +651,13 @@ function buildWeeklyStrugglers(
         }
 
         $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
-        // الدخول للقائمة: لم يُرسل رصداً أساسياً لأسبوع الرصد السابق
-        if (isset($weeksWithPrimary[$previousWeek])) {
+        $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
+        if (studentCoveredThroughPreviousWeek(
+            $weeksWithPrimary,
+            is_string($lastPrimary) ? $lastPrimary : null,
+            $previousWeek,
+            $primaryStartDay
+        )) {
             continue;
         }
 
@@ -608,7 +671,6 @@ function buildWeeklyStrugglers(
         $batchName = ($batchId > 0 && isset($batchesMap[$batchId]))
             ? (string)$batchesMap[$batchId]['name']
             : '—';
-        $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
         $lastPrimaryAt = $lastPrimary !== null && trim((string)$lastPrimary) !== ''
             ? substr((string)$lastPrimary, 0, 10)
             : null;
@@ -758,6 +820,7 @@ try {
     $weeklyQuota = max(1, (int)($settings['weekly_quota'] ?? 75));
     $atRiskInactiveDays = max(1, min(90, (int)($settings['at_risk_inactive_days'] ?? 14)));
     $submissionStartDay = (int)($settings['submission_start_day'] ?? 0);
+    $primaryStartDay = resolvePrimaryStartDay($settings);
 
     $stmtBooks = $pdo->query('SELECT id, title, total_pages, phase_number, track_type, level_type FROM curriculum');
     $allBooks = $stmtBooks->fetchAll(PDO::FETCH_ASSOC);
@@ -817,26 +880,38 @@ try {
             continue;
         }
         if (in_array($status, ['on_time', 'late', 'missed'], true)) {
-            if ($week !== '') {
-                $primaryWeeksByUser[$uid][$week] = true;
-            }
+            $weekNorm = normalizeWeekLabel($week);
             $logDate = trim((string)($log['date'] ?? ''));
-            if ($logDate !== '') {
-                $day = substr($logDate, 0, 10);
+            $day = $logDate !== '' ? substr($logDate, 0, 10) : '';
+            if ($weekNorm === '' && $day !== '') {
+                try {
+                    $weekNorm = weekLabelForDate(
+                        new DateTime($day, new DateTimeZone(APP_TIMEZONE)),
+                        $primaryStartDay
+                    );
+                } catch (Exception $e) {
+                    $weekNorm = '';
+                }
+            }
+            if ($weekNorm !== '') {
+                $primaryWeeksByUser[$uid][$weekNorm] = true;
+            }
+            if ($day !== '') {
                 if (!isset($lastPrimaryFromLogs[$uid]) || $day > $lastPrimaryFromLogs[$uid]) {
                     $lastPrimaryFromLogs[$uid] = $day;
                 }
-            } elseif ($week !== '' && (!isset($lastPrimaryFromLogs[$uid]) || $week > $lastPrimaryFromLogs[$uid])) {
-                $lastPrimaryFromLogs[$uid] = $week;
+            } elseif ($weekNorm !== '' && (!isset($lastPrimaryFromLogs[$uid]) || $weekNorm > $lastPrimaryFromLogs[$uid])) {
+                $lastPrimaryFromLogs[$uid] = $weekNorm;
             }
         }
-        if ($week === '') {
+        $weekNormForCommit = normalizeWeekLabel($week);
+        if ($weekNormForCommit === '') {
             continue;
         }
         if ($status === 'on_time') {
-            $onTimeWeeksByUser[$uid][$week] = true;
+            $onTimeWeeksByUser[$uid][$weekNormForCommit] = true;
         } elseif ($status === 'late') {
-            $lateWeeksByUser[$uid][$week] = true;
+            $lateWeeksByUser[$uid][$weekNormForCommit] = true;
         }
     }
 
@@ -869,7 +944,6 @@ try {
             }
         }
     }
-    $primaryStartDay = resolvePrimaryStartDay($settings);
 
     $usersDetail = [];
     $totalBooksCompleted = 0;
