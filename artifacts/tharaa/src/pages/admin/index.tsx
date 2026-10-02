@@ -6,8 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TrendingUp, Star, Trophy, Loader2, AlertTriangle, BookOpen } from "lucide-react";
-import { buildAnalyticsUrl } from "@/lib/analyticsQuery";
+import { TrendingUp, Star, Trophy, Loader2, BookOpen } from "lucide-react";
+import { buildAnalyticsUrl, defaultStrugglerFrom } from "@/lib/analyticsQuery";
+import { WeeklyStrugglersCard } from "@/components/admin/WeeklyStrugglersCard";
 import { Link } from "wouter";
 
 function StatCard({
@@ -33,11 +34,24 @@ export default function AdminOverview() {
   const { data: batches } = useListBatches();
   const [selectedBatch, setSelectedBatch] = useState("all");
   const [selectedTrack, setSelectedTrack] = useState("all");
+  const [strugglerBatchId, setStrugglerBatchId] = useState("all");
+  const [strugglerFrom, setStrugglerFrom] = useState(defaultStrugglerFrom);
 
   const { data: analytics, isLoading } = useQuery({
-    queryKey: ["admin-analytics-overview", selectedBatch, selectedTrack],
+    queryKey: [
+      "admin-analytics-overview",
+      selectedBatch,
+      selectedTrack,
+      strugglerBatchId,
+      strugglerFrom,
+    ],
     queryFn: async () => {
-      const res = await fetch(buildAnalyticsUrl(selectedBatch, selectedTrack));
+      const res = await fetch(
+        buildAnalyticsUrl(selectedBatch, selectedTrack, {
+          strugglerBatchId,
+          strugglerFrom,
+        })
+      );
       if (!res.ok) throw new Error("فشل جلب البيانات");
       return res.json();
     },
@@ -114,31 +128,19 @@ export default function AdminOverview() {
           عرض: {batchLabel} · {trackLabel}
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="border-[var(--error-600)]/40">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2 text-[var(--error-600)]">
-                <AlertTriangle className="w-4 h-4" />
-                المنقطعون  ({atRisk?.windowDays ?? 14} يوم)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-[var(--error-600)]">{atRisk?.count ?? 0}</p>
-              <p className="text-xs text-[var(--text-secondary)] mt-1">
-                بلا رصد منذ المدة المحددة (بعد فترة سماح للمشارك الجديد)
-              </p>
-              {(atRisk?.students?.length ?? 0) > 0 && (
-                <ul className="mt-2 text-xs space-y-0.5 max-h-24 overflow-y-auto text-[var(--text-secondary)]">
-                  {atRisk.students.slice(0, 8).map((s) => (
-                    <li key={s.id}>
-                      {s.name} — {s.batchName}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+        <WeeklyStrugglersCard
+          students={atRisk?.students ?? []}
+          count={atRisk?.count ?? 0}
+          windowDays={atRisk?.windowDays ?? 7}
+          batches={batches}
+          strugglerBatchId={strugglerBatchId}
+          strugglerFrom={strugglerFrom}
+          onBatchChange={setStrugglerBatchId}
+          onFromChange={setStrugglerFrom}
+          isLoading={false}
+        />
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">

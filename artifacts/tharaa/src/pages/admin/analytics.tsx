@@ -11,12 +11,12 @@ import {
   TrendingUp,
   Star,
   Shield,
-  AlertTriangle,
   BookOpen,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { buildAnalyticsUrl } from "@/lib/analyticsQuery";
+import { buildAnalyticsUrl, defaultStrugglerFrom } from "@/lib/analyticsQuery";
 import { downloadAnalyticsExcel } from "@/lib/exportAnalyticsExcel";
+import { WeeklyStrugglersCard } from "@/components/admin/WeeklyStrugglersCard";
 
 function StatCard({
   label,
@@ -53,11 +53,24 @@ export default function AdminAnalytics() {
   const { data: batches } = useListBatches();
   const [selectedBatch, setSelectedBatch] = useState("all");
   const [selectedTrack, setSelectedTrack] = useState("all");
+  const [strugglerBatchId, setStrugglerBatchId] = useState("all");
+  const [strugglerFrom, setStrugglerFrom] = useState(defaultStrugglerFrom);
 
   const { data: analytics, isLoading } = useQuery({
-    queryKey: ["admin-analytics-full", selectedBatch, selectedTrack],
+    queryKey: [
+      "admin-analytics-full",
+      selectedBatch,
+      selectedTrack,
+      strugglerBatchId,
+      strugglerFrom,
+    ],
     queryFn: async () => {
-      const res = await fetch(buildAnalyticsUrl(selectedBatch, selectedTrack));
+      const res = await fetch(
+        buildAnalyticsUrl(selectedBatch, selectedTrack, {
+          strugglerBatchId,
+          strugglerFrom,
+        })
+      );
       if (!res.ok) throw new Error("فشل جلب الإحصائيات");
       return res.json();
     },
@@ -135,26 +148,19 @@ export default function AdminAnalytics() {
           </div>
         </div>
 
+        <WeeklyStrugglersCard
+          students={atRisk?.students ?? []}
+          count={atRisk?.count ?? 0}
+          windowDays={atRisk?.windowDays ?? 7}
+          batches={batches}
+          strugglerBatchId={strugglerBatchId}
+          strugglerFrom={strugglerFrom}
+          onBatchChange={setStrugglerBatchId}
+          onFromChange={setStrugglerFrom}
+          isLoading={isLoading}
+        />
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card className="border-[var(--error-600)]/30">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2 text-[var(--error-600)]">
-                <AlertTriangle className="w-4 h-4" />
-                المنقطعون  ({atRisk?.windowDays ?? 14} يوم)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{atRisk?.count ?? 0}</p>
-              <p className="text-[11px] text-[var(--text-secondary)] mt-1 leading-relaxed">
-                بلا رصد منذ المدة المحددة (المشارك الجديد يُستثنى حتى انتهاء نفس المدة)
-              </p>
-              <ul className="mt-2 text-xs space-y-0.5 max-h-24 overflow-y-auto text-[var(--text-secondary)]">
-                {(atRisk?.students ?? []).map((s: { id: number; name: string }) => (
-                  <li key={s.id}>{s.name}</li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">

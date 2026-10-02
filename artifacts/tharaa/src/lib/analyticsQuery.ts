@@ -1,16 +1,40 @@
-export function buildAnalyticsUrl(batchId: string, track: string): string {
+export function buildAnalyticsUrl(
+  batchId: string,
+  track: string,
+  extras?: { strugglerBatchId?: string; strugglerFrom?: string }
+): string {
   const params = new URLSearchParams();
   if (batchId !== "all") params.set("batchId", batchId);
   if (track !== "all") params.set("track", track);
+  if (extras?.strugglerBatchId && extras.strugglerBatchId !== "all") {
+    params.set("strugglerBatchId", extras.strugglerBatchId);
+  }
+  if (extras?.strugglerFrom) {
+    params.set("strugglerFrom", extras.strugglerFrom);
+  }
   const qs = params.toString();
   return `/api/analytics.php${qs ? `?${qs}` : ""}`;
 }
+
+export type AtRiskStudent = {
+  id: number;
+  name: string;
+  phone?: string;
+  batchId?: number | null;
+  batchName: string;
+  lastPrimaryAt?: string | null;
+  lastLogAt?: string | null;
+  missedWeeksSinceFilter?: number;
+};
 
 export type SupervisorIndicators = {
   atRisk?: {
     count: number;
     windowDays: number;
-    students: { id: number; name: string; batchName: string; lastLogAt?: string | null }[];
+    filterFrom?: string;
+    batchId?: number | null;
+    experimental?: boolean;
+    students: AtRiskStudent[];
   };
   bookBottleneck?: {
     bookId: number;
@@ -19,3 +43,13 @@ export type SupervisorIndicators = {
     method: string;
   } | null;
 };
+
+/** تاريخ افتراضي لحساب التعثرات: اليوم − 28 — O(1). */
+export function defaultStrugglerFrom(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 28);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}

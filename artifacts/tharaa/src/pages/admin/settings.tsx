@@ -261,17 +261,7 @@ export default function AdminSettings() {
                   يظهر زر «تنزيل المنهج» للمشارك حسب مساره (كامل أو ميسر).
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label className={labelClass}>أيام انقطاع الرصد (دائرة الخطر)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={90}
-                  value={atRiskInactiveDays}
-                  onChange={(e) => setAtRiskInactiveDays(e.target.value)}
-                  className="text-center"
-                />
-              </div>
+              {/* حقل أيام انقطاع الرصد مخفي مؤقتاً — القيمة تُحفظ كما هي من الحالة/API */}
               <Button
                 variant="secondary"
                 className="w-full mt-auto"
