@@ -92,7 +92,7 @@ export function StrugglersTeaserCard({
           {isLoading ? "..." : count}
         </p>
         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-          بلا رصد أساسي خلال آخر {windowDays} أيام.
+          بلا رصد أساسي لأسبوع الرصد السابق.
         </p>
         <Link href="/admin/strugglers">
           <Button type="button" variant="secondary" className="w-full sm:w-auto gap-2 min-h-10">
@@ -146,7 +146,7 @@ export function WeeklyStrugglersCard({
           </p>
         </div>
         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-          بلا رصد أساسي خلال آخر {windowDays} أيام. المشارك الجديد يُستثنى حتى انتهاء النافذة.
+          بلا رصد أساسي لأسبوع الرصد السابق. المشارك الجديد يُستثنى إن لم تُكلَّف دورته بعد.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3">
