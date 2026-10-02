@@ -39,7 +39,7 @@ export default function AdminStrugglers() {
             </span>
           </h2>
           <p className="text-sm text-[var(--text-secondary)] mt-1">
-            مشاركون بلا رصد أساسي خلال آخر 7 أيام — مع تواصل واتساب.
+            مشاركون بلا رصد أساسي لأسبوع الرصد السابق — مع تواصل واتساب.
           </p>
         </div>
 

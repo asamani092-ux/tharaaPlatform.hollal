@@ -529,7 +529,7 @@ function enumerateWeekLabelsSince(string $filterFrom, int $startDay, int $maxWee
 }
 
 /**
- * متعثرون: بلا رصد أساسي خلال آخر windowDays يوماً (رياض).
+ * متعثرون: بلا رصد أساسي لأسبوع الرصد السابق (دورة أسبوعية).
  * زمن: O(U·W) حيث W ≤ 12؛ مكان: O(U).
  *
  * @param array<int, string|null> $lastPrimaryByUser
@@ -548,9 +548,16 @@ function buildWeeklyStrugglers(
     int $primaryStartDay
 ): array {
     $windowDays = max(1, min(90, $windowDays));
+    $tz = new DateTimeZone(APP_TIMEZONE);
     $today = riyadhDateTime();
     $today->setTime(0, 0, 0);
-    $windowStart = (clone $today)->modify('-' . $windowDays . ' days');
+    $currentWeek = weekLabelForDate($today, $primaryStartDay);
+    $previousWeekDt = new DateTime($currentWeek, $tz);
+    $previousWeekDt->modify('-7 days');
+    $previousWeek = $previousWeekDt->format('Y-m-d');
+    // من انضم بعد بداية الأسبوع السابق لم يُكلَّف بدورته بعد
+    $eligibilityCutoff = clone $previousWeekDt;
+
     $weekLabels = enumerateWeekLabelsSince($filterFrom, $primaryStartDay, 12);
     $students = [];
 
@@ -559,6 +566,12 @@ function buildWeeklyStrugglers(
         if ($uid <= 0) {
             continue;
         }
+
+        $status = strtolower(trim((string)($user['status'] ?? 'active')));
+        if ($status !== '' && $status !== 'active') {
+            continue;
+        }
+
         $batchId = (int)($user['batch_id'] ?? 0);
         if ($strugglerBatchId !== null && $strugglerBatchId > 0 && $batchId !== $strugglerBatchId) {
             continue;
@@ -574,27 +587,17 @@ function buildWeeklyStrugglers(
         );
         if ($memberSince !== null) {
             $memberDay = (clone $memberSince)->setTime(0, 0, 0);
-            if ($memberDay > $windowStart) {
+            if ($memberDay > $eligibilityCutoff) {
                 continue;
             }
         }
 
-        $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
-        $inWindow = false;
-        if ($lastPrimary !== null && trim((string)$lastPrimary) !== '') {
-            try {
-                $lastDt = new DateTime((string)$lastPrimary, new DateTimeZone(APP_TIMEZONE));
-                $lastDt->setTime(0, 0, 0);
-                $inWindow = $lastDt >= $windowStart;
-            } catch (Exception $e) {
-                $inWindow = false;
-            }
-        }
-        if ($inWindow) {
+        $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
+        // الدخول للقائمة: لم يُرسل رصداً أساسياً لأسبوع الرصد السابق
+        if (isset($weeksWithPrimary[$previousWeek])) {
             continue;
         }
 
-        $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
         $missed = 0;
         foreach ($weekLabels as $label) {
             if (!isset($weeksWithPrimary[$label])) {
@@ -605,6 +608,7 @@ function buildWeeklyStrugglers(
         $batchName = ($batchId > 0 && isset($batchesMap[$batchId]))
             ? (string)$batchesMap[$batchId]['name']
             : '—';
+        $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
         $lastPrimaryAt = $lastPrimary !== null && trim((string)$lastPrimary) !== ''
             ? substr((string)$lastPrimary, 0, 10)
             : null;
@@ -618,6 +622,7 @@ function buildWeeklyStrugglers(
             'lastPrimaryAt' => $lastPrimaryAt,
             'lastLogAt' => $lastPrimaryAt,
             'missedWeeksSinceFilter' => $missed,
+            'missedWeekLabel' => $previousWeek,
         ];
     }
 
@@ -776,7 +781,7 @@ try {
 
     $stmtUsers = $pdo->query("
         SELECT u.id, u.name, u.phone, u.batch_id, u.completed_books, u.last_page, u.current_book_id,
-               u.track_override, u.created_at AS user_created_at,
+               u.track_override, u.status, u.created_at AS user_created_at,
                b.default_track, b.created_at AS batch_created_at
         FROM users u
         LEFT JOIN batches b ON b.id = u.batch_id
@@ -805,26 +810,28 @@ try {
 
     foreach ($logsRows as $log) {
         $uid = (int)$log['user_id'];
-        $week = $log['week_label'] ?? '';
+        $week = trim((string)($log['week_label'] ?? ''));
         $status = $log['submission_status'] ?? '';
-        if ($week === '') {
-            continue;
-        }
-        // لا تدخل سجلات إنجاز سابق / تحفيز اختياري في مؤشر التزام
+        // لا تدخل سجلات إنجاز سابق / تحفيز اختياري في مؤشر التزام أو المتعثرين
         if ($status === 'extra') {
             continue;
         }
         if (in_array($status, ['on_time', 'late', 'missed'], true)) {
-            $primaryWeeksByUser[$uid][$week] = true;
+            if ($week !== '') {
+                $primaryWeeksByUser[$uid][$week] = true;
+            }
             $logDate = trim((string)($log['date'] ?? ''));
             if ($logDate !== '') {
                 $day = substr($logDate, 0, 10);
                 if (!isset($lastPrimaryFromLogs[$uid]) || $day > $lastPrimaryFromLogs[$uid]) {
                     $lastPrimaryFromLogs[$uid] = $day;
                 }
-            } elseif (!isset($lastPrimaryFromLogs[$uid]) || $week > $lastPrimaryFromLogs[$uid]) {
+            } elseif ($week !== '' && (!isset($lastPrimaryFromLogs[$uid]) || $week > $lastPrimaryFromLogs[$uid])) {
                 $lastPrimaryFromLogs[$uid] = $week;
             }
+        }
+        if ($week === '') {
+            continue;
         }
         if ($status === 'on_time') {
             $onTimeWeeksByUser[$uid][$week] = true;
