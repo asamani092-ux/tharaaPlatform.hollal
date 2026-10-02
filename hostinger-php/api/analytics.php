@@ -944,7 +944,6 @@ try {
             }
         }
     }
-    $primaryStartDay = resolvePrimaryStartDay($settings);
 
     $usersDetail = [];
     $totalBooksCompleted = 0;
