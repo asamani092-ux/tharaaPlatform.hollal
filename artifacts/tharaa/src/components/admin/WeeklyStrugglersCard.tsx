@@ -92,7 +92,7 @@ export function StrugglersTeaserCard({
           {isLoading ? "..." : count}
         </p>
         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-          بلا رصد أساسي خلال فترة الفلتر.
+          بلا رصد أساسي بتاريخ يقع بين تاريخ الفلتر واليوم.
         </p>
         <Link href="/admin/strugglers">
           <Button type="button" variant="secondary" className="w-full sm:w-auto gap-2 min-h-10">
@@ -146,7 +146,7 @@ export function WeeklyStrugglersCard({
           </p>
         </div>
         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-          بلا رصد أساسي خلال فترة الفلتر. المشارك الجديد بعد بداية الفلتر يُستثنى.
+          بلا رصد أساسي بتاريخ يقع بين تاريخ الفلتر واليوم.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3">
@@ -167,7 +167,7 @@ export function WeeklyStrugglersCard({
             </Select>
           </div>
           <div className="space-y-1.5 flex-1 min-w-[160px]">
-            <Label className="text-xs text-[var(--text-secondary)]">احسب التعثرات منذ</Label>
+            <Label className="text-xs text-[var(--text-secondary)]">من تاريخ (حتى اليوم)</Label>
             <Input
               type="date"
               dir="ltr"

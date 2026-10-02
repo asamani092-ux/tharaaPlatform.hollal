@@ -39,7 +39,7 @@ export default function AdminStrugglers() {
             </span>
           </h2>
           <p className="text-sm text-[var(--text-secondary)] mt-1">
-            مشاركون بلا رصد أساسي خلال فترة الفلتر — مع تواصل واتساب.
+            يظهر من لم يُرسل رصداً أساسياً بين تاريخ الفلتر واليوم. من رصد اليوم يخرج فوراً.
           </p>
         </div>
 

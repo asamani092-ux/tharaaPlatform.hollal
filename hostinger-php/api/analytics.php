@@ -537,6 +537,14 @@ function loadLastPrimaryLogDateByUser(PDO $pdo): array
 }
 
 /**
+ * تطبيع مفتاح أسبوع الرصد إلى Y-m-d — O(1).
+ */
+function normalizeWeekLabel($raw): string
+{
+    return calendarDayYmd($raw);
+}
+
+/**
  * تعداد مفاتيح أسابيع الرصد من تاريخ إلى اليوم — O(W)، W ≤ maxWeeks.
  * @return list<string>
  */
@@ -564,99 +572,142 @@ function enumerateWeekLabelsSince(string $filterFrom, int $startDay, int $maxWee
 }
 
 /**
- * تطبيع مفتاح أسبوع الرصد إلى Y-m-d — O(1).
+ * يوم تقويم صالح (رياض) من قيمة تاريخ/وقت — O(1).
+ * لا يستخدم week_label (بداية أسبوع لا تاريخ إرسال).
  */
-function normalizeWeekLabel($raw): string
+function calendarDayYmd($raw): string
 {
     $s = trim((string)$raw);
-    if ($s === '') {
+    if ($s === '' || strpos($s, '0000-00-00') === 0) {
         return '';
     }
-    if (preg_match('/^(\d{4}-\d{2}-\d{2})/', $s, $m)) {
-        return $m[1];
-    }
-    try {
-        $dt = new DateTime($s, new DateTimeZone(APP_TIMEZONE));
-        return $dt->format('Y-m-d');
-    } catch (Exception $e) {
+    if (preg_match('/^(20\d{2})-(\d{2})-(\d{2})$/', $s, $m)) {
+        if ((int)$m[2] >= 1 && (int)$m[2] <= 12 && (int)$m[3] >= 1 && (int)$m[3] <= 31) {
+            return $m[0];
+        }
         return '';
     }
+    if (preg_match('/^(20\d{2}-\d{2}-\d{2})[ T]/', $s, $m)) {
+        try {
+            $dt = new DateTime($s);
+            $dt->setTimezone(new DateTimeZone(APP_TIMEZONE));
+            $ymd = $dt->format('Y-m-d');
+            return strpos($ymd, '0000') === 0 ? '' : $ymd;
+        } catch (Exception $e) {
+            $day = substr($m[1], 0, 10);
+            return strpos($day, '0000') === 0 ? '' : $day;
+        }
+    }
+    return '';
 }
 
 /**
- * هل يوجد رصد أساسي يتقاطع مع فترة الفلتر [filterFrom, today]؟
- * زمن: O(W) لأسابيع المشارك.
- *
- * @param array<string, true> $weeksWithPrimary
+ * أعمدة الوقت المتاحة في reading_logs — O(C).
+ * @return array<string, true>
  */
-function hasPrimaryInFilterPeriod(
-    array $weeksWithPrimary,
-    ?string $lastPrimaryAt,
-    string $filterFrom,
-    string $todayYmd,
-    int $primaryStartDay
-): bool {
-    $from = normalizeWeekLabel($filterFrom);
-    $to = normalizeWeekLabel($todayYmd);
+function readingLogsTimeColumns(PDO $pdo): array
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+    $cache = [];
+    try {
+        $rows = $pdo->query('SHOW COLUMNS FROM reading_logs')->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $col) {
+            $name = strtolower((string)($col['Field'] ?? ''));
+            if ($name !== '') {
+                $cache[$name] = true;
+            }
+        }
+    } catch (Exception $e) {
+        $cache = ['date' => true, 'week_label' => true];
+    }
+    return $cache;
+}
+
+/**
+ * أيام الرصد الأساسي لكل مشارك من تاريخ الإرسال الفعلي — O(L).
+ * @return array<int, array<string, true>>
+ */
+function collectPrimaryEventDays(array $logsRows): array
+{
+    $days = [];
+    foreach ($logsRows as $log) {
+        $uid = (int)($log['user_id'] ?? 0);
+        if ($uid <= 0) {
+            continue;
+        }
+        $status = strtolower(trim((string)($log['submission_status'] ?? '')));
+        if ($status === 'extra') {
+            continue;
+        }
+        $eventDay = calendarDayYmd($log['date'] ?? '');
+        if ($eventDay === '') {
+            $eventDay = calendarDayYmd($log['created_at'] ?? '');
+        }
+        if ($eventDay === '') {
+            $eventDay = calendarDayYmd($log['log_created'] ?? '');
+        }
+        if ($eventDay === '') {
+            $eventDay = calendarDayYmd($log['week_label'] ?? '');
+        }
+        if ($eventDay === '') {
+            continue;
+        }
+        $days[$uid][$eventDay] = true;
+    }
+    return $days;
+}
+
+function lastEventDay(array $eventDays): ?string
+{
+    if ($eventDays === []) {
+        return null;
+    }
+    $keys = array_keys($eventDays);
+    rsort($keys, SORT_STRING);
+    return $keys[0];
+}
+
+/**
+ * هل يوجد رصد أساسي بتاريخ تقويمي داخل [filterFrom, today]؟
+ * زمن: O(D) لأيام المشارك.
+ *
+ * @param array<string, true> $eventDays
+ */
+function hasPrimaryOnCalendarRange(array $eventDays, string $filterFrom, string $todayYmd): bool
+{
+    $from = calendarDayYmd($filterFrom);
+    $to = calendarDayYmd($todayYmd);
     if ($from === '' || $to === '') {
         return false;
     }
-
-    $last = normalizeWeekLabel($lastPrimaryAt ?? '');
-    if ($last !== '' && $last >= $from && $last <= $to) {
-        return true;
+    if ($from > $to) {
+        $tmp = $from;
+        $from = $to;
+        $to = $tmp;
     }
-
-    if ($last !== '') {
-        try {
-            $lastWeek = weekLabelForDate(
-                new DateTime($last, new DateTimeZone(APP_TIMEZONE)),
-                $primaryStartDay
-            );
-            $weekEnd = (new DateTime($lastWeek, new DateTimeZone(APP_TIMEZONE)))
-                ->modify('+6 days')
-                ->format('Y-m-d');
-            if ($lastWeek <= $to && $weekEnd >= $from) {
-                return true;
-            }
-        } catch (Exception $e) {
-            // continue
-        }
-    }
-
-    foreach ($weeksWithPrimary as $label => $_) {
-        $w = normalizeWeekLabel($label);
-        if ($w === '') {
-            continue;
-        }
-        try {
-            $weekEnd = (new DateTime($w, new DateTimeZone(APP_TIMEZONE)))
-                ->modify('+6 days')
-                ->format('Y-m-d');
-        } catch (Exception $e) {
-            continue;
-        }
-        // الأسبوع يتقاطع مع فترة الفلتر
-        if ($w <= $to && $weekEnd >= $from) {
+    foreach ($eventDays as $day => $_) {
+        if ($day >= $from && $day <= $to) {
             return true;
         }
     }
-
     return false;
 }
 
 /**
- * متعثرون: بلا أي رصد أساسي خلال فترة الفلتر فقط (وليس التاريخ كله).
- * زمن: O(U·W) حيث W ≤ 12؛ مكان: O(U).
+ * متعثرون: بلا رصد أساسي بتاريخ يقع داخل فترة الفلتر فقط.
+ * زمن: O(U+L)؛ مكان: O(U+L).
  *
- * @param array<int, string|null> $lastPrimaryByUser
+ * @param array<int, array<string, true>> $primaryDaysByUser
  * @param array<int, array<string, true>> $primaryWeeksByUser
  * @return list<array<string, mixed>>
  */
 function buildWeeklyStrugglers(
     array $users,
     array $batchesMap,
-    array $lastPrimaryByUser,
+    array $primaryDaysByUser,
     array $primaryWeeksByUser,
     array $memberContextByUser,
     int $windowDays,
@@ -664,21 +715,16 @@ function buildWeeklyStrugglers(
     ?int $strugglerBatchId,
     int $primaryStartDay
 ): array {
-    $windowDays = max(1, min(90, $windowDays));
     $tz = new DateTimeZone(APP_TIMEZONE);
     $today = riyadhDateTime();
     $today->setTime(0, 0, 0);
     $todayYmd = $today->format('Y-m-d');
-    $filterFromNorm = normalizeWeekLabel($filterFrom);
+    $filterFromNorm = calendarDayYmd($filterFrom);
     if ($filterFromNorm === '') {
         $filterFromNorm = (clone $today)->modify('-7 days')->format('Y-m-d');
     }
-
-    try {
-        $eligibilityCutoff = new DateTime($filterFromNorm, $tz);
-        $eligibilityCutoff->setTime(0, 0, 0);
-    } catch (Exception $e) {
-        $eligibilityCutoff = (clone $today)->modify('-7 days');
+    if ($filterFromNorm > $todayYmd) {
+        $filterFromNorm = $todayYmd;
     }
 
     $weekLabels = enumerateWeekLabelsSince($filterFromNorm, $primaryStartDay, 12);
@@ -700,35 +746,12 @@ function buildWeeklyStrugglers(
             continue;
         }
 
-        $ctx = $memberContextByUser[$uid] ?? [
-            'userCreatedAt' => $user['user_created_at'] ?? null,
-            'batchCreatedAt' => $user['batch_created_at'] ?? null,
-        ];
-        $memberSince = resolveMemberSinceDate(
-            $ctx['userCreatedAt'] ?? null,
-            $ctx['batchCreatedAt'] ?? null
-        );
-        if ($memberSince !== null) {
-            $memberDay = (clone $memberSince)->setTime(0, 0, 0);
-            // انضم بعد بداية فترة الفلتر → لم تُحسب عليه الفترة كاملة
-            if ($memberDay > $eligibilityCutoff) {
-                continue;
-            }
-        }
-
-        $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
-        $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
-        // الشرط الوحيد للدخول: لا رصد أساسي يتقاطع مع فترة الفلتر
-        if (hasPrimaryInFilterPeriod(
-            $weeksWithPrimary,
-            is_string($lastPrimary) ? $lastPrimary : null,
-            $filterFromNorm,
-            $todayYmd,
-            $primaryStartDay
-        )) {
+        $eventDays = $primaryDaysByUser[$uid] ?? [];
+        if (hasPrimaryOnCalendarRange($eventDays, $filterFromNorm, $todayYmd)) {
             continue;
         }
 
+        $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
         $missed = 0;
         foreach ($weekLabels as $label) {
             if (!isset($weeksWithPrimary[$label])) {
@@ -739,9 +762,7 @@ function buildWeeklyStrugglers(
         $batchName = ($batchId > 0 && isset($batchesMap[$batchId]))
             ? (string)$batchesMap[$batchId]['name']
             : '—';
-        $lastPrimaryAt = $lastPrimary !== null && trim((string)$lastPrimary) !== ''
-            ? substr((string)$lastPrimary, 0, 10)
-            : null;
+        $lastPrimaryAt = lastEventDay($eventDays);
 
         $students[] = [
             'id' => $uid,
@@ -920,19 +941,17 @@ try {
     ");
     $users = $stmtUsers->fetchAll(PDO::FETCH_ASSOC);
 
-    try {
-        $logsStmt = $pdo->query("
-            SELECT user_id, book_id, week_label, submission_status, pages_read, `date`
-            FROM reading_logs
-        ");
-        $logsRows = $logsStmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Exception $e) {
-        $logsStmt = $pdo->query("
-            SELECT user_id, book_id, week_label, submission_status, pages_read
-            FROM reading_logs
-        ");
-        $logsRows = $logsStmt->fetchAll(PDO::FETCH_ASSOC);
+    $logCols = readingLogsTimeColumns($pdo);
+    $selectLog = ['user_id', 'book_id', 'week_label', 'submission_status', 'pages_read'];
+    if (isset($logCols['date'])) {
+        $selectLog[] = '`date`';
     }
+    if (isset($logCols['created_at'])) {
+        $selectLog[] = 'created_at';
+    }
+    $logsRows = $pdo->query(
+        'SELECT ' . implode(', ', $selectLog) . ' FROM reading_logs'
+    )->fetchAll(PDO::FETCH_ASSOC);
 
     $onTimeWeeksByUser = [];
     $lateWeeksByUser = [];
@@ -1186,7 +1205,7 @@ try {
         $atRiskList = buildWeeklyStrugglers(
             $users,
             $batchesMap,
-            $lastPrimaryByUser,
+            collectPrimaryEventDays($logsRows),
             $primaryWeeksByUser,
             $memberContextByUser,
             $strugglerWindowDays,

@@ -44,12 +44,18 @@ export type SupervisorIndicators = {
   } | null;
 };
 
-/** تاريخ افتراضي لحساب التعثرات: اليوم − 7 — O(1). */
-export function defaultStrugglerFrom(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 7);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+/** تاريخ افتراضي لحساب التعثرات: اليوم − 7 بتوقيت الرياض — O(1). */
+export function riyadhYmd(offsetDays = 0): string {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60_000;
+  const riyadh = new Date(utc + 3 * 60 * 60_000);
+  riyadh.setDate(riyadh.getDate() + offsetDays);
+  const y = riyadh.getFullYear();
+  const m = String(riyadh.getMonth() + 1).padStart(2, "0");
+  const day = String(riyadh.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+export function defaultStrugglerFrom(): string {
+  return riyadhYmd(-7);
 }
