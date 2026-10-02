@@ -12,7 +12,7 @@ import {
   ShieldAlert,
   Shield,
   AlertTriangle,
-  MoreVertical,
+  Menu,
 } from "lucide-react";
 import { isSupervisorRole } from "@/lib/roles";
 import { Button } from "@/components/ui/button";
@@ -155,23 +155,25 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-background text-foreground flex-col md:flex-row font-sans" dir="rtl">
-      {/* شريط علوي للجوال */}
-      <header className="md:hidden sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-3 bg-[var(--bg-primary)] border-b border-[var(--border-default)]">
-        <img
-          src={isDark ? "/brand/logo-full-white.png" : "/brand/logo-full-dark.png"}
-          alt="ثراء المعرفة"
-          className="h-10 w-auto max-w-[160px] object-contain"
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="min-h-10 min-w-10"
-          aria-label="فتح القائمة"
-          onClick={() => setMobileOpen(true)}
-        >
-          <MoreVertical className="h-5 w-5" />
-        </Button>
+      {/* شريط علوي للجوال: الشعار ثم ثلاث خطوط يمينه أسفله */}
+      <header className="md:hidden sticky top-0 z-40 px-4 py-3 bg-[var(--bg-primary)] border-b border-[var(--border-default)]">
+        <div className="flex flex-col items-start gap-1">
+          <img
+            src={isDark ? "/brand/logo-full-white.png" : "/brand/logo-full-dark.png"}
+            alt="ثراء المعرفة"
+            className="h-10 w-auto max-w-[160px] object-contain object-right"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="min-h-10 min-w-10 -mr-1"
+            aria-label="فتح القائمة"
+            onClick={() => setMobileOpen(true)}
+          >
+            <Menu className="h-5 w-5" strokeWidth={2.25} />
+          </Button>
+        </div>
       </header>
 
       {/* درج الجوال */}
