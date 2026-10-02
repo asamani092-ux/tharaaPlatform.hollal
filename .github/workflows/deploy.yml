@@ -46,3 +46,18 @@ jobs:
           exclude: |
             **/api/**
             .htaccess
+
+      - name: 📁 Stage analytics.php for API upload
+        run: |
+          mkdir -p .deploy-api
+          cp hostinger-php/api/analytics.php .deploy-api/analytics.php
+
+      - name: 🚀 Sync analytics.php to Hostinger API
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./.deploy-api/
+          server-dir: ./api/
+          dangerous-clean-slate: false
