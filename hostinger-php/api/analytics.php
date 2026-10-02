@@ -512,7 +512,7 @@ function enumerateWeekLabelsSince(string $filterFrom, int $startDay, int $maxWee
         $from = new DateTime($filterFrom, $tz);
     } catch (Exception $e) {
         $from = riyadhDateTime();
-        $from->modify('-28 days');
+        $from->modify('-7 days');
     }
     $from->setTime(0, 0, 0);
     $today = riyadhDateTime();
@@ -843,7 +843,7 @@ try {
         $strugglerBatchId = null;
     }
     $defaultStrugglerFrom = riyadhDateTime();
-    $defaultStrugglerFrom->modify('-28 days');
+    $defaultStrugglerFrom->modify('-7 days');
     $strugglerFromRaw = isset($_GET['strugglerFrom']) ? trim((string)$_GET['strugglerFrom']) : '';
     if ($strugglerFromRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $strugglerFromRaw)) {
         $strugglerFrom = $strugglerFromRaw;

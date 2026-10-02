@@ -7,8 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TrendingUp, Star, Trophy, Loader2, BookOpen } from "lucide-react";
-import { buildAnalyticsUrl, defaultStrugglerFrom } from "@/lib/analyticsQuery";
-import { WeeklyStrugglersCard } from "@/components/admin/WeeklyStrugglersCard";
+import { buildAnalyticsUrl } from "@/lib/analyticsQuery";
+import { StrugglersTeaserCard } from "@/components/admin/WeeklyStrugglersCard";
 import { Link } from "wouter";
 
 function StatCard({
@@ -34,24 +34,11 @@ export default function AdminOverview() {
   const { data: batches } = useListBatches();
   const [selectedBatch, setSelectedBatch] = useState("all");
   const [selectedTrack, setSelectedTrack] = useState("all");
-  const [strugglerBatchId, setStrugglerBatchId] = useState("all");
-  const [strugglerFrom, setStrugglerFrom] = useState(defaultStrugglerFrom);
 
   const { data: analytics, isLoading } = useQuery({
-    queryKey: [
-      "admin-analytics-overview",
-      selectedBatch,
-      selectedTrack,
-      strugglerBatchId,
-      strugglerFrom,
-    ],
+    queryKey: ["admin-analytics-overview", selectedBatch, selectedTrack],
     queryFn: async () => {
-      const res = await fetch(
-        buildAnalyticsUrl(selectedBatch, selectedTrack, {
-          strugglerBatchId,
-          strugglerFrom,
-        })
-      );
+      const res = await fetch(buildAnalyticsUrl(selectedBatch, selectedTrack));
       if (!res.ok) throw new Error("فشل جلب البيانات");
       return res.json();
     },
@@ -128,19 +115,11 @@ export default function AdminOverview() {
           عرض: {batchLabel} · {trackLabel}
         </p>
 
-        <WeeklyStrugglersCard
-          students={atRisk?.students ?? []}
-          count={atRisk?.count ?? 0}
-          windowDays={atRisk?.windowDays ?? 7}
-          batches={batches}
-          strugglerBatchId={strugglerBatchId}
-          strugglerFrom={strugglerFrom}
-          onBatchChange={setStrugglerBatchId}
-          onFromChange={setStrugglerFrom}
-          isLoading={false}
-        />
-
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <StrugglersTeaserCard
+            count={atRisk?.count ?? 0}
+            windowDays={atRisk?.windowDays ?? 7}
+          />
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">

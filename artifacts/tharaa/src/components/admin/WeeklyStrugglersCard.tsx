@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, MessageCircle } from "lucide-react";
+import { Link } from "wouter";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -8,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { AtRiskStudent } from "@/lib/analyticsQuery";
 import { buildStrugglerWhatsAppUrl } from "@/lib/whatsappLink";
+import { WhatsAppIcon } from "@/components/admin/WhatsAppIcon";
 
 const INITIAL_VISIBLE = 30;
 
@@ -24,6 +26,8 @@ type Props = {
   onFromChange: (value: string) => void;
   isLoading?: boolean;
   compact?: boolean;
+  /** teaser: ملخص + زر انتقال فقط */
+  variant?: "full" | "teaser";
 };
 
 function formatLastPrimary(value: string | null | undefined): string {
@@ -43,17 +47,61 @@ function WhatsAppButton({ student }: { student: AtRiskStudent }) {
     <Button
       type="button"
       size="sm"
-      variant={disabled ? "outline" : "secondary"}
-      className="min-h-10 gap-1.5"
+      variant={disabled ? "outline" : "default"}
+      className={[
+        "min-h-10 gap-1.5",
+        disabled
+          ? "opacity-60"
+          : "bg-[#25D366] hover:bg-[#1ebe57] text-white border-transparent",
+      ].join(" ")}
       disabled={disabled}
       title={disabled ? "رقم الجوال غير صالح" : "فتح واتساب"}
       onClick={() => {
         if (url) window.open(url, "_blank", "noopener,noreferrer");
       }}
     >
-      <MessageCircle className="w-4 h-4" />
+      <WhatsAppIcon className="w-4 h-4" />
       <span className="hidden sm:inline">واتساب</span>
     </Button>
+  );
+}
+
+/** بطاقة ملخص لنظرة عامة / الإحصائيات — O(1). */
+export function StrugglersTeaserCard({
+  count,
+  windowDays = 7,
+  isLoading = false,
+}: {
+  count: number;
+  windowDays?: number;
+  isLoading?: boolean;
+}) {
+  return (
+    <Card className="border-[var(--error-600)]/30">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex flex-wrap items-center gap-2 text-[var(--error-600)]">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>متعثرون الأسبوع الماضي ({windowDays} أيام)</span>
+          <span className="text-[10px] font-normal px-2 py-0.5 rounded-md border border-[var(--error-600)]/40 text-[var(--error-600)]">
+            تجريبي
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-2xl font-bold text-[var(--error-600)] tabular-nums">
+          {isLoading ? "..." : count}
+        </p>
+        <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+          بلا رصد أساسي خلال آخر {windowDays} أيام.
+        </p>
+        <Link href="/admin/strugglers">
+          <Button type="button" variant="secondary" className="w-full sm:w-auto gap-2 min-h-10">
+            عرض القائمة
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+        </Link>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -68,10 +116,17 @@ export function WeeklyStrugglersCard({
   onFromChange,
   isLoading = false,
   compact = false,
+  variant = "full",
 }: Props) {
   const [visible, setVisible] = useState(INITIAL_VISIBLE);
   const rows = useMemo(() => students.slice(0, visible), [students, visible]);
   const hasMore = students.length > visible;
+
+  if (variant === "teaser") {
+    return (
+      <StrugglersTeaserCard count={count} windowDays={windowDays} isLoading={isLoading} />
+    );
+  }
 
   return (
     <Card className="border-[var(--error-600)]/30">

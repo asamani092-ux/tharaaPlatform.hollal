@@ -13,6 +13,7 @@ import SubmitLog from "@/pages/student/submit";
 import AdminDashboard from "@/pages/admin/index";
 import AdminUsers from "@/pages/admin/users";
 import AdminAnalytics from "@/pages/admin/analytics";
+import AdminStrugglers from "@/pages/admin/strugglers";
 import AdminCurriculum from "@/pages/admin/curriculum";
 import AdminSettings from "@/pages/admin/settings";
 import AdminBatches from "@/pages/admin/batches";
@@ -125,6 +126,11 @@ function Router() {
       <Route path="/admin/analytics">
         <AuthGuard requireRole="staff">
           <AdminAnalytics />
+        </AuthGuard>
+      </Route>
+      <Route path="/admin/strugglers">
+        <AuthGuard requireRole="staff">
+          <AdminStrugglers />
         </AuthGuard>
       </Route>
       <Route path="/admin/curriculum">

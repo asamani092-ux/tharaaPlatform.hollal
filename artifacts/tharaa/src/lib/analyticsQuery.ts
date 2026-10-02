@@ -44,10 +44,10 @@ export type SupervisorIndicators = {
   } | null;
 };
 
-/** تاريخ افتراضي لحساب التعثرات: اليوم − 28 — O(1). */
+/** تاريخ افتراضي لحساب التعثرات: اليوم − 7 — O(1). */
 export function defaultStrugglerFrom(): string {
   const d = new Date();
-  d.setDate(d.getDate() - 28);
+  d.setDate(d.getDate() - 7);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
