@@ -495,7 +495,11 @@ function loadLastPrimaryLogDateByUser(PDO $pdo): array
                      END
                    ) AS last_date
             FROM reading_logs
-            WHERE submission_status IN ('on_time', 'late', 'missed')
+            WHERE (
+                submission_status IN ('on_time', 'late', 'missed')
+                OR submission_status IS NULL
+                OR TRIM(submission_status) = ''
+            )
             GROUP BY user_id
         ")->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as $row) {
@@ -510,7 +514,11 @@ function loadLastPrimaryLogDateByUser(PDO $pdo): array
             $rows = $pdo->query("
                 SELECT user_id, MAX(LEFT(week_label, 10)) AS last_date
                 FROM reading_logs
-                WHERE submission_status IN ('on_time', 'late', 'missed')
+                WHERE (
+                submission_status IN ('on_time', 'late', 'missed')
+                OR submission_status IS NULL
+                OR TRIM(submission_status) = ''
+            )
                   AND week_label IS NOT NULL AND TRIM(week_label) <> ''
                 GROUP BY user_id
             ")->fetchAll(PDO::FETCH_ASSOC);
@@ -939,7 +947,8 @@ try {
         if ($status === 'extra') {
             continue;
         }
-        if (in_array($status, ['on_time', 'late', 'missed'], true)) {
+        $isPrimary = ($status === '' || in_array($status, ['on_time', 'late', 'missed'], true));
+        if ($isPrimary) {
             $weekNorm = normalizeWeekLabel($week);
             $logDate = trim((string)($log['date'] ?? ''));
             $day = $logDate !== '' ? substr($logDate, 0, 10) : '';
