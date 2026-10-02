@@ -8,6 +8,9 @@ require_once 'db.php';
 if (!function_exists('requireStaffRole')) {
     require_once 'auth_helpers.php';
 }
+if (!function_exists('weekLabelForDate')) {
+    require_once 'week_label_helpers.php';
+}
 
 function loadSettings(PDO $pdo): array
 {
@@ -475,6 +478,160 @@ function loadLastLogDateByUser(PDO $pdo): array
     return $map;
 }
 
+/** آخر رصد أساسي فقط (on_time|late|missed) — O(U) عبر SQL. */
+function loadLastPrimaryLogDateByUser(PDO $pdo): array
+{
+    $map = [];
+    try {
+        $rows = $pdo->query("
+            SELECT user_id, MAX(`date`) AS last_date
+            FROM reading_logs
+            WHERE submission_status IN ('on_time', 'late', 'missed')
+            GROUP BY user_id
+        ")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $row) {
+            $uid = (int)($row['user_id'] ?? 0);
+            if ($uid > 0 && !empty($row['last_date'])) {
+                $map[$uid] = (string)$row['last_date'];
+            }
+        }
+    } catch (Exception $e) {
+        // ignore if date column missing
+    }
+    return $map;
+}
+
+/**
+ * تعداد مفاتيح أسابيع الرصد من تاريخ إلى اليوم — O(W)، W ≤ maxWeeks.
+ * @return list<string>
+ */
+function enumerateWeekLabelsSince(string $filterFrom, int $startDay, int $maxWeeks = 12): array
+{
+    $tz = new DateTimeZone(APP_TIMEZONE);
+    try {
+        $from = new DateTime($filterFrom, $tz);
+    } catch (Exception $e) {
+        $from = riyadhDateTime();
+        $from->modify('-28 days');
+    }
+    $from->setTime(0, 0, 0);
+    $today = riyadhDateTime();
+    $today->setTime(0, 0, 0);
+
+    $labels = [];
+    $cursor = new DateTime(weekLabelForDate($from, $startDay), $tz);
+    $endLabel = weekLabelForDate($today, $startDay);
+    while (count($labels) < $maxWeeks && $cursor->format('Y-m-d') <= $endLabel) {
+        $labels[] = $cursor->format('Y-m-d');
+        $cursor->modify('+7 days');
+    }
+    return $labels;
+}
+
+/**
+ * متعثرون: بلا رصد أساسي خلال آخر windowDays يوماً (رياض).
+ * زمن: O(U·W) حيث W ≤ 12؛ مكان: O(U).
+ *
+ * @param array<int, string|null> $lastPrimaryByUser
+ * @param array<int, array<string, true>> $primaryWeeksByUser
+ * @return list<array<string, mixed>>
+ */
+function buildWeeklyStrugglers(
+    array $users,
+    array $batchesMap,
+    array $lastPrimaryByUser,
+    array $primaryWeeksByUser,
+    array $memberContextByUser,
+    int $windowDays,
+    string $filterFrom,
+    ?int $strugglerBatchId,
+    int $primaryStartDay
+): array {
+    $windowDays = max(1, min(90, $windowDays));
+    $today = riyadhDateTime();
+    $today->setTime(0, 0, 0);
+    $windowStart = (clone $today)->modify('-' . $windowDays . ' days');
+    $weekLabels = enumerateWeekLabelsSince($filterFrom, $primaryStartDay, 12);
+    $students = [];
+
+    foreach ($users as $user) {
+        $uid = (int)($user['id'] ?? 0);
+        if ($uid <= 0) {
+            continue;
+        }
+        $batchId = (int)($user['batch_id'] ?? 0);
+        if ($strugglerBatchId !== null && $strugglerBatchId > 0 && $batchId !== $strugglerBatchId) {
+            continue;
+        }
+
+        $ctx = $memberContextByUser[$uid] ?? [
+            'userCreatedAt' => $user['user_created_at'] ?? null,
+            'batchCreatedAt' => $user['batch_created_at'] ?? null,
+        ];
+        $memberSince = resolveMemberSinceDate(
+            $ctx['userCreatedAt'] ?? null,
+            $ctx['batchCreatedAt'] ?? null
+        );
+        if ($memberSince !== null) {
+            $memberDay = (clone $memberSince)->setTime(0, 0, 0);
+            if ($memberDay > $windowStart) {
+                continue;
+            }
+        }
+
+        $lastPrimary = $lastPrimaryByUser[$uid] ?? null;
+        $inWindow = false;
+        if ($lastPrimary !== null && trim((string)$lastPrimary) !== '') {
+            try {
+                $lastDt = new DateTime((string)$lastPrimary, new DateTimeZone(APP_TIMEZONE));
+                $lastDt->setTime(0, 0, 0);
+                $inWindow = $lastDt >= $windowStart;
+            } catch (Exception $e) {
+                $inWindow = false;
+            }
+        }
+        if ($inWindow) {
+            continue;
+        }
+
+        $weeksWithPrimary = $primaryWeeksByUser[$uid] ?? [];
+        $missed = 0;
+        foreach ($weekLabels as $label) {
+            if (!isset($weeksWithPrimary[$label])) {
+                $missed++;
+            }
+        }
+
+        $batchName = ($batchId > 0 && isset($batchesMap[$batchId]))
+            ? (string)$batchesMap[$batchId]['name']
+            : '—';
+        $lastPrimaryAt = $lastPrimary !== null && trim((string)$lastPrimary) !== ''
+            ? substr((string)$lastPrimary, 0, 10)
+            : null;
+
+        $students[] = [
+            'id' => $uid,
+            'name' => (string)($user['name'] ?? ''),
+            'phone' => (string)($user['phone'] ?? ''),
+            'batchId' => $batchId > 0 ? $batchId : null,
+            'batchName' => $batchName,
+            'lastPrimaryAt' => $lastPrimaryAt,
+            'lastLogAt' => $lastPrimaryAt,
+            'missedWeeksSinceFilter' => $missed,
+        ];
+    }
+
+    usort($students, function ($a, $b) {
+        $missCmp = ($b['missedWeeksSinceFilter'] <=> $a['missedWeeksSinceFilter']);
+        if ($missCmp !== 0) {
+            return $missCmp;
+        }
+        return strcmp((string)$a['name'], (string)$b['name']);
+    });
+
+    return $students;
+}
+
 /** مرجع بدء المتابعة: تاريخ إنشاء المشارك أو الدفعة (الأحدث) — O(1) */
 function resolveMemberSinceDate(?string $userCreatedAt, ?string $batchCreatedAt): ?DateTime
 {
@@ -618,7 +775,7 @@ try {
     }
 
     $stmtUsers = $pdo->query("
-        SELECT u.id, u.name, u.batch_id, u.completed_books, u.last_page, u.current_book_id,
+        SELECT u.id, u.name, u.phone, u.batch_id, u.completed_books, u.last_page, u.current_book_id,
                u.track_override, u.created_at AS user_created_at,
                b.default_track, b.created_at AS batch_created_at
         FROM users u
@@ -627,14 +784,24 @@ try {
     ");
     $users = $stmtUsers->fetchAll(PDO::FETCH_ASSOC);
 
-    $logsStmt = $pdo->query("
-        SELECT user_id, book_id, week_label, submission_status, pages_read
-        FROM reading_logs
-    ");
-    $logsRows = $logsStmt->fetchAll(PDO::FETCH_ASSOC);
+    try {
+        $logsStmt = $pdo->query("
+            SELECT user_id, book_id, week_label, submission_status, pages_read, `date`
+            FROM reading_logs
+        ");
+        $logsRows = $logsStmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        $logsStmt = $pdo->query("
+            SELECT user_id, book_id, week_label, submission_status, pages_read
+            FROM reading_logs
+        ");
+        $logsRows = $logsStmt->fetchAll(PDO::FETCH_ASSOC);
+    }
 
     $onTimeWeeksByUser = [];
     $lateWeeksByUser = [];
+    $primaryWeeksByUser = [];
+    $lastPrimaryFromLogs = [];
 
     foreach ($logsRows as $log) {
         $uid = (int)$log['user_id'];
@@ -646,6 +813,18 @@ try {
         // لا تدخل سجلات إنجاز سابق / تحفيز اختياري في مؤشر التزام
         if ($status === 'extra') {
             continue;
+        }
+        if (in_array($status, ['on_time', 'late', 'missed'], true)) {
+            $primaryWeeksByUser[$uid][$week] = true;
+            $logDate = trim((string)($log['date'] ?? ''));
+            if ($logDate !== '') {
+                $day = substr($logDate, 0, 10);
+                if (!isset($lastPrimaryFromLogs[$uid]) || $day > $lastPrimaryFromLogs[$uid]) {
+                    $lastPrimaryFromLogs[$uid] = $day;
+                }
+            } elseif (!isset($lastPrimaryFromLogs[$uid]) || $week > $lastPrimaryFromLogs[$uid]) {
+                $lastPrimaryFromLogs[$uid] = $week;
+            }
         }
         if ($status === 'on_time') {
             $onTimeWeeksByUser[$uid][$week] = true;
@@ -659,8 +838,24 @@ try {
         $filterTrack = null;
     }
     $filterBatchId = isset($_GET['batchId']) ? (int)$_GET['batchId'] : null;
+    $strugglerBatchId = isset($_GET['strugglerBatchId']) ? (int)$_GET['strugglerBatchId'] : null;
+    if ($strugglerBatchId !== null && $strugglerBatchId <= 0) {
+        $strugglerBatchId = null;
+    }
+    $defaultStrugglerFrom = riyadhDateTime();
+    $defaultStrugglerFrom->modify('-28 days');
+    $strugglerFromRaw = isset($_GET['strugglerFrom']) ? trim((string)$_GET['strugglerFrom']) : '';
+    if ($strugglerFromRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $strugglerFromRaw)) {
+        $strugglerFrom = $strugglerFromRaw;
+    } else {
+        $strugglerFrom = $defaultStrugglerFrom->format('Y-m-d');
+    }
     $meId = $scopeMe ? (int)($_COOKIE['userId'] ?? 0) : 0;
     $lastLogByUser = $scopeMe ? [] : loadLastLogDateByUser($pdo);
+    $lastPrimaryByUser = $scopeMe ? [] : (
+        !empty($lastPrimaryFromLogs) ? $lastPrimaryFromLogs : loadLastPrimaryLogDateByUser($pdo)
+    );
+    $primaryStartDay = resolvePrimaryStartDay($settings);
 
     $usersDetail = [];
     $totalBooksCompleted = 0;
@@ -830,11 +1025,25 @@ try {
     ];
 
     if (!$scopeMe) {
-        $atRiskList = buildAtRiskStudents($usersDetail, $lastLogByUser, $atRiskInactiveDays, $memberContextByUser);
+        $strugglerWindowDays = 7;
+        $atRiskList = buildWeeklyStrugglers(
+            $users,
+            $batchesMap,
+            $lastPrimaryByUser,
+            $primaryWeeksByUser,
+            $memberContextByUser,
+            $strugglerWindowDays,
+            $strugglerFrom,
+            $strugglerBatchId,
+            $primaryStartDay
+        );
         $response['supervisorIndicators'] = [
             'atRisk' => [
                 'count' => count($atRiskList),
-                'windowDays' => $atRiskInactiveDays,
+                'windowDays' => $strugglerWindowDays,
+                'filterFrom' => $strugglerFrom,
+                'batchId' => $strugglerBatchId,
+                'experimental' => true,
                 'students' => $atRiskList,
             ],
             'bookBottleneck' => buildBookBottleneck($filteredUsersRaw, $booksMap),
@@ -842,6 +1051,8 @@ try {
         $response['filters'] = [
             'batchId' => $filterBatchId,
             'track' => $filterTrack,
+            'strugglerFrom' => $strugglerFrom,
+            'strugglerBatchId' => $strugglerBatchId,
         ];
     }
 
