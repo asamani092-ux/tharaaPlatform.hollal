@@ -47,12 +47,13 @@ jobs:
             **/api/**
             .htaccess
 
-      - name: 📁 Stage analytics.php for API upload
+      - name: 📁 Stage API PHP files for upload
         run: |
           mkdir -p .deploy-api
           cp hostinger-php/api/analytics.php .deploy-api/analytics.php
+          cp hostinger-php/api/logs.php .deploy-api/logs.php
 
-      - name: 🚀 Sync analytics.php to Hostinger API
+      - name: 🚀 Sync API PHP to Hostinger
         uses: SamKirkland/FTP-Deploy-Action@v4.3.4
         with:
           server: ${{ secrets.FTP_SERVER }}

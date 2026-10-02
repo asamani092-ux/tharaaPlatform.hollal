@@ -242,9 +242,10 @@ try {
         $stmtBook = $pdo->prepare('SELECT id, phase_number, track_type, total_pages FROM curriculum WHERE id = ?');
         $stmtInsert = $pdo->prepare("
             INSERT INTO reading_logs
-            (user_id, book_id, start_page, end_page, pages_read, is_completed, submission_status, reflection, week_label)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, book_id, start_page, end_page, pages_read, is_completed, submission_status, reflection, week_label, `date`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
+        $logDate = riyadhDateTime()->format('Y-m-d');
 
         $lastBookId = null;
         $lastEndPage = 0;
@@ -284,6 +285,7 @@ try {
                 $submissionStatus,
                 $rowReflection,
                 $weekLabel,
+                $logDate,
             ]);
             $insertedIds[] = (int)$pdo->lastInsertId();
 
