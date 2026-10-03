@@ -39,7 +39,7 @@ export default function AdminStrugglers() {
             </span>
           </h2>
           <p className="text-sm text-[var(--text-secondary)] mt-1">
-            يظهر من لم يُرسل رصداً أساسياً بين تاريخ الفلتر واليوم. من رصد اليوم يخرج فوراً.
+            يظهر من لم يُرسل أي رصد (أساسي أو إضافي) يغطي الفترة حتى اليوم. من رصد اليوم أو أنجز إضافةً داخل الفترة يخرج فوراً.
           </p>
         </div>
 
@@ -59,6 +59,11 @@ export default function AdminStrugglers() {
             onBatchChange={setStrugglerBatchId}
             onFromChange={setStrugglerFrom}
             isLoading={isLoading}
+            activeTotal={atRisk?.activeTotal}
+            coveredCount={atRisk?.coveredCount}
+            primaryDayAr={atRisk?.primaryDayAr}
+            primaryDayFromSettings={atRisk?.primaryDayFromSettings}
+            filterTo={atRisk?.filterTo}
           />
         )}
       </div>

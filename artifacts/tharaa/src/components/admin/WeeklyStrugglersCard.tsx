@@ -28,6 +28,11 @@ type Props = {
   compact?: boolean;
   /** teaser: ملخص + زر انتقال فقط */
   variant?: "full" | "teaser";
+  activeTotal?: number;
+  coveredCount?: number;
+  primaryDayAr?: string;
+  primaryDayFromSettings?: boolean;
+  filterTo?: string | null;
 };
 
 function formatLastPrimary(value: string | null | undefined): string {
@@ -92,7 +97,7 @@ export function StrugglersTeaserCard({
           {isLoading ? "..." : count}
         </p>
         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-          بلا رصد أساسي بتاريخ يقع بين تاريخ الفلتر واليوم.
+          بلا أي رصد (أساسي أو إضافي) يغطي فترة الفلتر حتى اليوم.
         </p>
         <Link href="/admin/strugglers">
           <Button type="button" variant="secondary" className="w-full sm:w-auto gap-2 min-h-10">
@@ -117,6 +122,11 @@ export function WeeklyStrugglersCard({
   isLoading = false,
   compact = false,
   variant = "full",
+  activeTotal,
+  coveredCount,
+  primaryDayAr,
+  primaryDayFromSettings,
+  filterTo,
 }: Props) {
   const [visible, setVisible] = useState(INITIAL_VISIBLE);
   const rows = useMemo(() => students.slice(0, visible), [students, visible]);
@@ -146,8 +156,36 @@ export function WeeklyStrugglersCard({
           </p>
         </div>
         <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-          بلا رصد أساسي بتاريخ يقع بين تاريخ الفلتر واليوم.
+          بلا أي رصد (أساسي أو إضافي) يغطي الفترة من تاريخ الفلتر حتى اليوم. من أرسل إنجازاً إضافياً داخل الفترة لا يُعد متعثراً.
         </p>
+        {!isLoading && activeTotal != null ? (
+          <div className="rounded-[var(--radius-md)] border border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-3 text-[11px] text-[var(--text-secondary)] space-y-1 leading-relaxed">
+            <p>
+              العدد = النشطون ({activeTotal}) − المغطّون ({coveredCount ?? 0}) ={" "}
+              <span className="font-semibold tabular-nums text-[var(--error-600)]">{count}</span>
+            </p>
+            <p>
+              الفترة:{" "}
+              <span className="tabular-nums" dir="ltr">
+                {strugglerFrom}
+              </span>
+              {" → "}
+              <span className="tabular-nums" dir="ltr">
+                {filterTo || "اليوم"}
+              </span>
+            </p>
+            <p>
+              يوم الرصد من الإعدادات:{" "}
+              <span className="font-semibold text-[var(--text-primary)]">
+                {primaryDayAr || "—"}
+              </span>
+              {primaryDayFromSettings === false
+                ? " (افتراضي: لم يُحفظ في الإعدادات)"
+                : " (مأخوذ من الإعدادات)"}
+              . يُستخدم لحدود أسبوع week_label وليس كتاريخ فلتر بديل.
+            </p>
+          </div>
+        ) : null}
 
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="space-y-1.5 flex-1 min-w-[140px]">
@@ -190,7 +228,7 @@ export function WeeklyStrugglersCard({
                   <TableRow>
                     <TableHead className="text-right">الاسم</TableHead>
                     <TableHead className="text-right">الدفعة</TableHead>
-                    <TableHead className="text-center">آخر رصد أساسي</TableHead>
+                    <TableHead className="text-center">آخر رصد</TableHead>
                     <TableHead className="text-center">تعثرات منذ الفلتر</TableHead>
                     <TableHead className="text-center">تواصل</TableHead>
                   </TableRow>
@@ -224,7 +262,7 @@ export function WeeklyStrugglersCard({
                   <p className="font-semibold text-[var(--text-primary)]">{s.name}</p>
                   <p className="text-xs text-[var(--text-secondary)]">الدفعة: {s.batchName || "—"}</p>
                   <p className="text-xs text-[var(--text-secondary)]">
-                    آخر رصد أساسي:{" "}
+                    آخر رصد:{" "}
                     <span className="tabular-nums">
                       {formatLastPrimary(s.lastPrimaryAt ?? s.lastLogAt)}
                     </span>

@@ -32,9 +32,16 @@ export type SupervisorIndicators = {
     count: number;
     windowDays: number;
     filterFrom?: string;
+    filterTo?: string | null;
     batchId?: number | null;
     experimental?: boolean;
     students: AtRiskStudent[];
+    activeTotal?: number;
+    coveredCount?: number;
+    primaryDay?: string;
+    primaryDayAr?: string;
+    primaryDayFromSettings?: boolean;
+    formula?: string;
   };
   bookBottleneck?: {
     bookId: number;
