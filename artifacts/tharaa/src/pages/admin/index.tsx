@@ -118,7 +118,9 @@ export default function AdminOverview() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <StrugglersTeaserCard
             count={atRisk?.count ?? 0}
-            windowDays={atRisk?.windowDays ?? 7}
+            windowDays={atRisk?.windowDays ?? 1}
+            primaryDayAr={atRisk?.primaryDayAr}
+            filterFrom={atRisk?.filterFrom}
           />
           <Card>
             <CardHeader className="pb-2">

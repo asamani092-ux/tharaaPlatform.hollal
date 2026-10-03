@@ -4,12 +4,12 @@ import { useListBatches } from "@workspace/api-client-react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { AdminLayout } from "@/components/layout";
 import { WeeklyStrugglersCard } from "@/components/admin/WeeklyStrugglersCard";
-import { buildAnalyticsUrl, defaultStrugglerFrom } from "@/lib/analyticsQuery";
+import { buildAnalyticsUrl } from "@/lib/analyticsQuery";
 
 export default function AdminStrugglers() {
   const { data: batches } = useListBatches();
   const [strugglerBatchId, setStrugglerBatchId] = useState("all");
-  const [strugglerFrom, setStrugglerFrom] = useState(defaultStrugglerFrom);
+  const [strugglerFrom, setStrugglerFrom] = useState("");
 
   const { data: analytics, isLoading } = useQuery({
     queryKey: ["admin-strugglers", strugglerBatchId, strugglerFrom],
@@ -39,7 +39,7 @@ export default function AdminStrugglers() {
             </span>
           </h2>
           <p className="text-sm text-[var(--text-secondary)] mt-1">
-            يظهر من لم يُرسل أي رصد (أساسي أو إضافي) يغطي الفترة حتى اليوم. من رصد اليوم أو أنجز إضافةً داخل الفترة يخرج فوراً.
+            الافتراضي: منذ آخر يوم رصد في الإعدادات حتى اليوم. الإنجاز الإضافي داخل الفترة يُخرج من القائمة.
           </p>
         </div>
 
@@ -52,7 +52,7 @@ export default function AdminStrugglers() {
           <WeeklyStrugglersCard
             students={atRisk?.students ?? []}
             count={atRisk?.count ?? 0}
-            windowDays={atRisk?.windowDays ?? 7}
+            windowDays={atRisk?.windowDays ?? 1}
             batches={batches}
             strugglerBatchId={strugglerBatchId}
             strugglerFrom={strugglerFrom}
@@ -61,8 +61,12 @@ export default function AdminStrugglers() {
             isLoading={isLoading}
             activeTotal={atRisk?.activeTotal}
             coveredCount={atRisk?.coveredCount}
+            coveredPrimaryCount={atRisk?.coveredPrimaryCount}
+            coveredExtraOnlyCount={atRisk?.coveredExtraOnlyCount}
             primaryDayAr={atRisk?.primaryDayAr}
             primaryDayFromSettings={atRisk?.primaryDayFromSettings}
+            lastPrimaryDay={atRisk?.lastPrimaryDay}
+            filterFrom={atRisk?.filterFrom}
             filterTo={atRisk?.filterTo}
           />
         )}

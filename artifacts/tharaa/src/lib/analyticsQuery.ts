@@ -38,9 +38,12 @@ export type SupervisorIndicators = {
     students: AtRiskStudent[];
     activeTotal?: number;
     coveredCount?: number;
+    coveredPrimaryCount?: number;
+    coveredExtraOnlyCount?: number;
     primaryDay?: string;
     primaryDayAr?: string;
     primaryDayFromSettings?: boolean;
+    lastPrimaryDay?: string;
     formula?: string;
   };
   bookBottleneck?: {
@@ -51,7 +54,7 @@ export type SupervisorIndicators = {
   } | null;
 };
 
-/** تاريخ افتراضي لحساب التعثرات: اليوم − 7 بتوقيت الرياض — O(1). */
+/** تاريخ بتوقيت الرياض — O(1). */
 export function riyadhYmd(offsetDays = 0): string {
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60_000;
@@ -63,6 +66,29 @@ export function riyadhYmd(offsetDays = 0): string {
   return `${y}-${m}-${day}`;
 }
 
-export function defaultStrugglerFrom(): string {
-  return riyadhYmd(-7);
+/** عرض تاريخ ميلادي بالعربية — O(1). */
+export function formatArDate(ymd?: string | null): string {
+  if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return "—";
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return new Intl.DateTimeFormat("ar", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    calendar: "gregory",
+  }).format(dt);
+}
+
+export function parseYmd(ymd: string): Date | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return undefined;
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+export function toYmd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }

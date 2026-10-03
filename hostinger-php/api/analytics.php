@@ -626,37 +626,86 @@ function readingLogsTimeColumns(PDO $pdo): array
     return $cache;
 }
 
+/** آخر يوم رصد (من الإعدادات) يقع في اليوم أو قبله — O(1). */
+function lastPrimaryDayYmd(int $primaryStartDay): string
+{
+    $today = riyadhDateTime();
+    $today->setTime(0, 0, 0);
+    $currentDay = (int)$today->format('w');
+    $daysSince = ($currentDay - $primaryStartDay + 7) % 7;
+    if ($daysSince > 0) {
+        $today->modify("-{$daysSince} days");
+    }
+    return $today->format('Y-m-d');
+}
+
+function isCountableLogStatus($status): bool
+{
+    $s = strtolower(trim((string)$status));
+    return $s === '' || in_array($s, ['on_time', 'late', 'missed', 'extra'], true);
+}
+
+function isExtraLogStatus($status): bool
+{
+    return strtolower(trim((string)$status)) === 'extra';
+}
+
+/** يوم الإرسال الفعلي: date ثم created_at ثم week_label كيوم واحد بلا تمديد — O(1). */
+function logEventDayYmd(array $log): string
+{
+    $eventDay = calendarDayYmd($log['date'] ?? '');
+    if ($eventDay === '') {
+        $eventDay = calendarDayYmd($log['created_at'] ?? '');
+    }
+    if ($eventDay === '') {
+        $eventDay = calendarDayYmd($log['log_created'] ?? '');
+    }
+    if ($eventDay === '') {
+        $eventDay = calendarDayYmd($log['week_label'] ?? '');
+    }
+    return $eventDay;
+}
+
 /**
- * أيام أي رصد (أساسي أو إضافي) لكل مشارك من تاريخ الإرسال الفعلي — O(L).
- * @return array{days: array<int, array<string, true>>, weeks: array<int, array<string, true>>}
+ * أيام الرصد الأساسي والإضافي لكل مشارك من تاريخ الإرسال الفعلي — O(L).
+ * القيمة: primary | extra
+ * @return array{days: array<int, array<string, string>>, weeks: array<int, array<string, true>>}
  */
-function collectSubmissionCoverage(array $logsRows): array
+function collectSubmissionCoverage(array $logsRows, int $primaryStartDay): array
 {
     $days = [];
     $weeks = [];
+    $tz = new DateTimeZone(APP_TIMEZONE);
     foreach ($logsRows as $log) {
+        if (!isCountableLogStatus($log['submission_status'] ?? '')) {
+            continue;
+        }
+        if (trim((string)($log['reflection'] ?? '')) === 'إنجاز سابق (تحفيز)') {
+            continue;
+        }
         $uid = (int)($log['user_id'] ?? 0);
         if ($uid <= 0) {
             continue;
         }
-        // أي إرسال يُخرج من التعثر في الفترة — بما فيه extra
-        $weekNorm = normalizeWeekLabel($log['week_label'] ?? '');
-        if ($weekNorm !== '') {
-            $weeks[$uid][$weekNorm] = true;
-        }
-
-        $eventDay = calendarDayYmd($log['date'] ?? '');
-        if ($eventDay === '') {
-            $eventDay = calendarDayYmd($log['created_at'] ?? '');
-        }
-        if ($eventDay === '') {
-            $eventDay = calendarDayYmd($log['log_created'] ?? '');
-        }
-        // لا نستخدم week_label كـ «يوم إرسال» حتى لا يُحسب يوم بداية الأسبوع بدل يوم الرصد الفعلي
+        $eventDay = logEventDayYmd($log);
         if ($eventDay === '') {
             continue;
         }
-        $days[$uid][$eventDay] = true;
+        $kind = isExtraLogStatus($log['submission_status'] ?? '') ? 'extra' : 'primary';
+        if (!isset($days[$uid][$eventDay]) || $kind === 'primary') {
+            $days[$uid][$eventDay] = $kind;
+        }
+        try {
+            $weekNorm = weekLabelForDate(new DateTime($eventDay, $tz), $primaryStartDay);
+            if ($weekNorm !== '') {
+                $weeks[$uid][$weekNorm] = true;
+            }
+        } catch (Exception $e) {
+            $weekNorm = normalizeWeekLabel($log['week_label'] ?? '');
+            if ($weekNorm !== '') {
+                $weeks[$uid][$weekNorm] = true;
+            }
+        }
     }
     return ['days' => $days, 'weeks' => $weeks];
 }
@@ -672,23 +721,18 @@ function lastEventDay(array $eventDays): ?string
 }
 
 /**
- * هل المشارك مغطى في فترة الفلتر؟
- * - رصد بتاريخ تقويمي داخل [from, to]
- * - أو رصد لأسبوع week_label يتقاطع مع الفترة (أسبوع الرصد من الإعدادات عند الإرسال)
+ * تغطية الفترة: يوم تقويمي داخل [from, to] فقط (بلا تمديد أسبوع).
+ * زمن: O(D).
  *
- * @param array<string, true> $eventDays
- * @param array<string, true> $eventWeeks
+ * @param array<string, string> $eventDays day => primary|extra
+ * @return array{covered: bool, byPrimary: bool, byExtraOnly: bool}
  */
-function isCoveredInFilterPeriod(
-    array $eventDays,
-    array $eventWeeks,
-    string $filterFrom,
-    string $todayYmd
-): bool {
+function coverageInFilterPeriod(array $eventDays, string $filterFrom, string $todayYmd): array
+{
     $from = calendarDayYmd($filterFrom);
     $to = calendarDayYmd($todayYmd);
     if ($from === '' || $to === '') {
-        return false;
+        return ['covered' => false, 'byPrimary' => false, 'byExtraOnly' => false];
     }
     if ($from > $to) {
         $tmp = $from;
@@ -696,40 +740,37 @@ function isCoveredInFilterPeriod(
         $to = $tmp;
     }
 
-    foreach ($eventDays as $day => $_) {
-        if ($day >= $from && $day <= $to) {
-            return true;
+    $byPrimary = false;
+    $byExtra = false;
+    foreach ($eventDays as $day => $kind) {
+        if ($day < $from || $day > $to) {
+            continue;
+        }
+        if ($kind === 'extra') {
+            $byExtra = true;
+        } else {
+            $byPrimary = true;
+        }
+        if ($byPrimary && $byExtra) {
+            break;
         }
     }
 
-    foreach ($eventWeeks as $weekStart => $_) {
-        $w = normalizeWeekLabel($weekStart);
-        if ($w === '') {
-            continue;
-        }
-        try {
-            $weekEnd = (new DateTime($w, new DateTimeZone(APP_TIMEZONE)))
-                ->modify('+6 days')
-                ->format('Y-m-d');
-        } catch (Exception $e) {
-            continue;
-        }
-        if ($w <= $to && $weekEnd >= $from) {
-            return true;
-        }
-    }
-
-    return false;
+    return [
+        'covered' => $byPrimary || $byExtra,
+        'byPrimary' => $byPrimary,
+        'byExtraOnly' => $byExtra && !$byPrimary,
+    ];
 }
 
 /**
- * متعثرون: بلا أي رصد (أساسي أو إضافي) يغطي فترة الفلتر.
+ * متعثرون: بلا أي رصد أساسي أو إضافي بتاريخ تقويمي داخل فترة الفلتر.
  * زمن: O(U+L)؛ مكان: O(U+L).
  *
- * @param array<int, array<string, true>> $submissionDaysByUser
+ * @param array<int, array<string, string>> $submissionDaysByUser
  * @param array<int, array<string, true>> $submissionWeeksByUser
  * @param array<int, array<string, true>> $primaryWeeksByUser
- * @return array{students: list<array<string, mixed>>, activeTotal: int, coveredCount: int}
+ * @return array<string, mixed>
  */
 function buildWeeklyStrugglers(
     array $users,
@@ -746,18 +787,24 @@ function buildWeeklyStrugglers(
     $today = riyadhDateTime();
     $today->setTime(0, 0, 0);
     $todayYmd = $today->format('Y-m-d');
+    $lastPrimaryDay = lastPrimaryDayYmd($primaryStartDay);
     $filterFromNorm = calendarDayYmd($filterFrom);
     if ($filterFromNorm === '') {
-        $filterFromNorm = (clone $today)->modify('-7 days')->format('Y-m-d');
+        $filterFromNorm = $lastPrimaryDay;
     }
     if ($filterFromNorm > $todayYmd) {
         $filterFromNorm = $todayYmd;
     }
 
+    $fromDt = new DateTime($filterFromNorm, new DateTimeZone(APP_TIMEZONE));
+    $windowDays = (int)$fromDt->diff($today)->format('%a') + 1;
+
     $weekLabels = enumerateWeekLabelsSince($filterFromNorm, $primaryStartDay, 12);
     $students = [];
     $activeTotal = 0;
     $coveredCount = 0;
+    $coveredPrimaryCount = 0;
+    $coveredExtraOnlyCount = 0;
 
     foreach ($users as $user) {
         $uid = (int)($user['id'] ?? 0);
@@ -778,8 +825,14 @@ function buildWeeklyStrugglers(
         $activeTotal++;
         $eventDays = $submissionDaysByUser[$uid] ?? [];
         $eventWeeks = $submissionWeeksByUser[$uid] ?? [];
-        if (isCoveredInFilterPeriod($eventDays, $eventWeeks, $filterFromNorm, $todayYmd)) {
+        $cov = coverageInFilterPeriod($eventDays, $filterFromNorm, $todayYmd);
+        if ($cov['covered']) {
             $coveredCount++;
+            if ($cov['byPrimary']) {
+                $coveredPrimaryCount++;
+            } elseif ($cov['byExtraOnly']) {
+                $coveredExtraOnlyCount++;
+            }
             continue;
         }
 
@@ -794,12 +847,12 @@ function buildWeeklyStrugglers(
         $batchName = ($batchId > 0 && isset($batchesMap[$batchId]))
             ? (string)$batchesMap[$batchId]['name']
             : '—';
-        $lastPrimaryAt = lastEventDay($eventDays);
-        if ($lastPrimaryAt === null) {
+        $lastAt = lastEventDay($eventDays);
+        if ($lastAt === null) {
             $weekKeys = array_keys($eventWeeks);
             if ($weekKeys !== []) {
                 rsort($weekKeys, SORT_STRING);
-                $lastPrimaryAt = $weekKeys[0];
+                $lastAt = $weekKeys[0];
             }
         }
 
@@ -809,8 +862,8 @@ function buildWeeklyStrugglers(
             'phone' => (string)($user['phone'] ?? ''),
             'batchId' => $batchId > 0 ? $batchId : null,
             'batchName' => $batchName,
-            'lastPrimaryAt' => $lastPrimaryAt,
-            'lastLogAt' => $lastPrimaryAt,
+            'lastPrimaryAt' => $lastAt,
+            'lastLogAt' => $lastAt,
             'missedWeeksSinceFilter' => $missed,
             'filterFrom' => $filterFromNorm,
         ];
@@ -828,8 +881,12 @@ function buildWeeklyStrugglers(
         'students' => $students,
         'activeTotal' => $activeTotal,
         'coveredCount' => $coveredCount,
+        'coveredPrimaryCount' => $coveredPrimaryCount,
+        'coveredExtraOnlyCount' => $coveredExtraOnlyCount,
         'filterFrom' => $filterFromNorm,
         'filterTo' => $todayYmd,
+        'windowDays' => $windowDays,
+        'lastPrimaryDay' => $lastPrimaryDay,
     ];
 }
 
@@ -994,6 +1051,9 @@ try {
     if (isset($logCols['created_at'])) {
         $selectLog[] = 'created_at';
     }
+    if (isset($logCols['reflection'])) {
+        $selectLog[] = 'reflection';
+    }
     $logsRows = $pdo->query(
         'SELECT ' . implode(', ', $selectLog) . ' FROM reading_logs'
     )->fetchAll(PDO::FETCH_ASSOC);
@@ -1057,13 +1117,11 @@ try {
     if ($strugglerBatchId !== null && $strugglerBatchId <= 0) {
         $strugglerBatchId = null;
     }
-    $defaultStrugglerFrom = riyadhDateTime();
-    $defaultStrugglerFrom->modify('-7 days');
     $strugglerFromRaw = isset($_GET['strugglerFrom']) ? trim((string)$_GET['strugglerFrom']) : '';
     if ($strugglerFromRaw !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $strugglerFromRaw)) {
         $strugglerFrom = $strugglerFromRaw;
     } else {
-        $strugglerFrom = $defaultStrugglerFrom->format('Y-m-d');
+        $strugglerFrom = lastPrimaryDayYmd($primaryStartDay);
     }
     $meId = $scopeMe ? (int)($_COOKIE['userId'] ?? 0) : 0;
     $lastLogByUser = $scopeMe ? [] : loadLastLogDateByUser($pdo);
@@ -1246,8 +1304,7 @@ try {
     ];
 
     if (!$scopeMe) {
-        $strugglerWindowDays = 7;
-        $coverage = collectSubmissionCoverage($logsRows);
+        $coverage = collectSubmissionCoverage($logsRows, $primaryStartDay);
         $strugglerResult = buildWeeklyStrugglers(
             $users,
             $batchesMap,
@@ -1255,7 +1312,7 @@ try {
             $coverage['weeks'],
             $primaryWeeksByUser,
             $memberContextByUser,
-            $strugglerWindowDays,
+            0,
             $strugglerFrom,
             $strugglerBatchId,
             $primaryStartDay
@@ -1277,7 +1334,7 @@ try {
         $response['supervisorIndicators'] = [
             'atRisk' => [
                 'count' => count($atRiskList),
-                'windowDays' => $strugglerWindowDays,
+                'windowDays' => (int)($strugglerResult['windowDays'] ?? 1),
                 'filterFrom' => $strugglerResult['filterFrom'] ?? $strugglerFrom,
                 'filterTo' => $strugglerResult['filterTo'] ?? null,
                 'batchId' => $strugglerBatchId,
@@ -1285,10 +1342,13 @@ try {
                 'students' => $atRiskList,
                 'activeTotal' => (int)($strugglerResult['activeTotal'] ?? 0),
                 'coveredCount' => (int)($strugglerResult['coveredCount'] ?? 0),
+                'coveredPrimaryCount' => (int)($strugglerResult['coveredPrimaryCount'] ?? 0),
+                'coveredExtraOnlyCount' => (int)($strugglerResult['coveredExtraOnlyCount'] ?? 0),
                 'primaryDay' => $primaryDayName,
                 'primaryDayAr' => $dayNameAr[$primaryDayName] ?? $primaryDayName,
                 'primaryDayFromSettings' => !empty($settings['primary_day']),
-                'formula' => 'activeTotal - coveredCount = count (أي رصد أساسي أو إضافي يغطي الفترة)',
+                'lastPrimaryDay' => (string)($strugglerResult['lastPrimaryDay'] ?? ''),
+                'formula' => 'نشطون − (أساسي أو إضافي بتاريخ داخل الفترة) = متعثرون',
             ],
             'bookBottleneck' => buildBookBottleneck($filteredUsersRaw, $booksMap),
         ];
